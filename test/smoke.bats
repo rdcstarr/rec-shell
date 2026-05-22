@@ -35,24 +35,24 @@ load_in() {
 
 @test "bash: loader defines ported functions and the rec-shell command" {
   REC_SHELL_ARGS="--norc" load_in bash \
-    'command -v git_release && command -v hosts && command -v extract && command -v mkcd && command -v rec-shell'
+    'command -v git_release && command -v hosts && command -v extract && command -v mkcd && command -v rec'
   [ "$status" -eq 0 ]
 }
 
 @test "zsh: loader defines ported functions and the rec-shell command" {
   REC_SHELL_ARGS="-f" load_in zsh \
-    'command -v git_release && command -v hosts && command -v extract && command -v mkcd && command -v rec-shell'
+    'command -v git_release && command -v hosts && command -v extract && command -v mkcd && command -v rec'
   [ "$status" -eq 0 ]
 }
 
 @test "bash: rec-shell version prints a semver" {
-  REC_SHELL_ARGS="--norc" load_in bash 'rec-shell version'
+  REC_SHELL_ARGS="--norc" load_in bash 'rec version'
   [ "$status" -eq 0 ]
   [[ "$output" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]
 }
 
 @test "zsh: rec-shell version prints a semver" {
-  REC_SHELL_ARGS="-f" load_in zsh 'rec-shell version'
+  REC_SHELL_ARGS="-f" load_in zsh 'rec version'
   [ "$status" -eq 0 ]
   [[ "$output" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]
 }
@@ -102,7 +102,21 @@ load_in() {
 
 @test "zsh: disable then enable round-trips the config" {
   REC_SHELL_ARGS="-f" load_in zsh \
-    'rec-shell disable ssh >/dev/null; rec-shell enable ssh >/dev/null; cat "$XDG_CONFIG_HOME/rec-shell/config"'
+    'rec disable ssh >/dev/null; rec enable ssh >/dev/null; cat "$XDG_CONFIG_HOME/rec-shell/config"'
   [ "$status" -eq 0 ]
   [[ "$output" == *'REC_DISABLED_MODULES=""'* ]]
+}
+
+# --- back-compat: the rec-shell alias still dispatches ---------------------
+
+@test "bash: rec-shell alias still works" {
+  REC_SHELL_ARGS="--norc" load_in bash 'rec-shell version'
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]
+}
+
+@test "zsh: rec-shell alias still works" {
+  REC_SHELL_ARGS="-f" load_in zsh 'rec-shell version'
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]
 }

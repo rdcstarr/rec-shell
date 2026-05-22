@@ -52,7 +52,7 @@ __rec_cmd_check() {
   command mkdir -p "$REC_CACHE_DIR" 2>/dev/null \
     && printf '%s\n%s\n' "$(date +%s)" "$_rcc_latest" >"$REC_CACHE_FILE" 2>/dev/null
   if rec_semver_gt "$_rcc_latest" "$_rcc_installed"; then
-    printf 'rec-shell %s is available (you have %s).\nRun: rec-shell update\n' "$_rcc_latest" "$_rcc_installed"
+    printf 'rec-shell %s is available (you have %s).\nRun: rec update\n' "$_rcc_latest" "$_rcc_installed"
   else
     printf 'rec-shell is up to date (%s).\n' "$_rcc_installed"
   fi
@@ -191,7 +191,7 @@ __rec_cmd_toggle() {
   _rct_new="$(printf '%s' "$_rct_new" | sed 's/^ *//; s/  */ /g; s/ *$//')"
 
   __rec_config_set REC_DISABLED_MODULES "$_rct_new"
-  printf 'rec-shell: %sd "%s". Run: rec-shell reload\n' "$_rct_action" "$_rct_mod"
+  printf 'rec-shell: %sd "%s". Run: rec reload\n' "$_rct_action" "$_rct_mod"
 }
 
 # __rec_config_set KEY VALUE -> replace (or add) KEY="VALUE" in the config file.
@@ -221,7 +221,7 @@ __rec_cmd_help() {
   cat <<'EOF'
 rec-shell — modern bash & zsh configuration
 
-Usage: rec-shell <command>     (alias: rec)
+Usage: rec <command>     (rec-shell also works)
 
 Commands:
   update            Update to the latest released version (git pull to newest tag)

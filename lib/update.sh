@@ -68,7 +68,7 @@ rec_update_refresh() {
 # rec_update_banner VERSION -> one-line nudge, on stderr so it never pollutes
 # command substitution that captures stdout.
 rec_update_banner() {
-  printf '\033[33mrec-shell %s available\033[0m — run: \033[1mrec-shell update\033[0m\n' "$1" >&2
+  printf '\033[33mrec-shell %s available\033[0m — run: \033[1mrec update\033[0m\n' "$1" >&2
 }
 
 # rec_update_startup -> called once per interactive shell by the loader.

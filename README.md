@@ -5,7 +5,7 @@ installed into a directory and loaded with a single line, with a ddev-style
 "new version available" notification and a one-command update.
 
 ```
-⬆ rec-shell 1.3.0 available — run: rec-shell update
+⬆ rec-shell 1.3.0 available — run: rec update
 ```
 
 ## Why
@@ -19,7 +19,7 @@ with no way to learn that a newer version existed. `rec-shell` replaces that:
 - **Non-invasive install.** Your `~/.zshrc` / `~/.bashrc` keep a single guarded
   line; updates never touch your personal rc or local customizations.
 - **Update notifications.** A daily, non-blocking check prints a one-line banner
-  when a newer release exists. Updates are always explicit (`rec-shell update`).
+  when a newer release exists. Updates are always explicit (`rec update`).
 - **Extensible.** Add a file to `modules/` and it loads automatically.
 
 ## Install
@@ -36,7 +36,7 @@ System-wide for every user on a server (adds the loader to `/etc` rc files):
 curl -fsSL https://rec-shell.recwebnetwork.com/install | sudo bash -s -- --system
 ```
 
-Then restart your shell (or `exec $SHELL -l`) and run `rec-shell doctor`.
+Then restart your shell (or `exec $SHELL -l`) and run `rec doctor`.
 
 Installer flags: `--user` (default), `--system`, `--unattended`, `--no-omp`,
 `--dir DIR`, `--ref REF`. Overrides: `REC_SHELL_REPO_URL`, `REC_SHELL_REF`,
@@ -47,7 +47,7 @@ Installer flags: `--user` (default), `--system`, `--unattended`, `--no-omp`,
 
 ## Commands
 
-`rec-shell <command>` (alias: `rec`):
+`rec <command>` (alias: `rec-shell`):
 
 | Command | What it does |
 | --- | --- |

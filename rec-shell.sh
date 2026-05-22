@@ -74,9 +74,10 @@ done
 if [ -n "$_rec_old_lc" ]; then LC_ALL="$_rec_old_lc"; else unset LC_ALL; fi
 unset _rec_mod _rec_key _rec_disabled _rec_old_lc _rec_nomatch_restore
 
-# 7) The `rec-shell` command. A function (not a PATH script) so `reload` and
-#    `update` can re-source the live shell. Body is lazy-loaded on first use.
-rec-shell() {
+# 7) The `rec` command. A function (not a PATH script) so `reload` and `update`
+#    can re-source the live shell, lazy-loaded on first use. `rec-shell` stays
+#    available as a back-compat alias.
+rec() {
   if ! command -v __rec_dispatch >/dev/null 2>&1; then
     if [ -r "$REC_SHELL_DIR/lib/cli.sh" ]; then
       . "$REC_SHELL_DIR/lib/cli.sh"
@@ -87,7 +88,9 @@ rec-shell() {
   fi
   __rec_dispatch "$@"
 }
-alias rec='rec-shell'
+# Back-compat: keep the old `rec-shell` command name working. A function (not an
+# alias) so it resolves at call time and has no alias parse-order surprises.
+rec-shell() { rec "$@"; }
 
 # 8) User overrides, sourced LAST so they always win.
 if [ "$REC_SHELL_NAME" = zsh ] && [ -r "$HOME/.zsh_aliases" ]; then

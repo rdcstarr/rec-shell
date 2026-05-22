@@ -241,4 +241,4 @@ ensure_omp
 VER="$(head -n1 "$TARGET_DIR/VERSION" 2>/dev/null || echo '?')"
 printf '\n%s✓ rec-shell %s installed.%s\n' "$C_G" "$VER" "$C_0"
 printf 'Restart your shell, or run: %sexec %s -l%s\n' "$C_B" "${SHELL:-bash}" "$C_0"
-printf 'Then check it with: %srec-shell doctor%s\n' "$C_B" "$C_0"
+printf 'Then check it with: %srec doctor%s\n' "$C_B" "$C_0"
