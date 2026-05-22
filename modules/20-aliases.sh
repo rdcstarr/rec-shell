@@ -32,5 +32,3 @@ else
   alias free='free -h'
   alias top='htop 2>/dev/null || top'
 fi
-
-# Git is available as a command group: `rec git sync|push|release|init`.

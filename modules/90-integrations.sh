@@ -18,6 +18,21 @@ if [ -d "$HOME/.local/bin" ]; then
   esac
 fi
 
+# npm global binaries on PATH (idempotent; added unconditionally so it works
+# even before the prefix dir is first created)
+case ":$PATH:" in
+  *":$HOME/.npm-global/bin:"*) ;;
+  *) PATH="$HOME/.npm-global/bin:$PATH" ;;
+esac
+
+# pnpm — PNPM_HOME is set unconditionally so pnpm knows where to install global
+# packages even before that directory exists yet.
+export PNPM_HOME="$HOME/.local/share/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) PATH="$PNPM_HOME:$PATH" ;;
+esac
+
 # nvm (Node Version Manager)
 if [ -d "$HOME/.nvm" ]; then
   export NVM_DIR="$HOME/.nvm"

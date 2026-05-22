@@ -134,3 +134,11 @@ load_in() {
   [ "$status" -eq 0 ]
   [[ "$output" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]
 }
+
+# --- integrations: pnpm + npm-global PATH ----------------------------------
+
+@test "bash: integrations put pnpm + npm-global on PATH (and export PNPM_HOME)" {
+  REC_SHELL_ARGS="--norc" load_in bash 'printf "%s\n%s" "$PATH" "$PNPM_HOME"'
+  [[ "$output" == *"$REC_HOME/.npm-global/bin"* ]]
+  [[ "$output" == *"$REC_HOME/.local/share/pnpm"* ]]
+}

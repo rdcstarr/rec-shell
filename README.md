@@ -64,8 +64,10 @@ Installer flags: `--user` (default), `--system`, `--unattended`, `--no-omp`,
 
 Prompt (oh-my-posh + per-host color), history tuning, colorized aliases and
 navigation shortcuts, completion, archive `extract`, `mkcd`, SSH `hosts` /
-`open_hosts`, and optional integrations (nvm, zoxide, …). See `modules/`.
-Git helpers live under `rec git` (below).
+`open_hosts`, **DDEV smart commands** (`php`/`composer`/`npm`/`artisan`/… run in
+the container when you're inside a ddev project, on the host otherwise — only
+when `ddev` is installed), and optional integrations (nvm, pnpm, zoxide, …).
+See `modules/`. Git helpers live under `rec git` (below).
 
 ## Git
 
