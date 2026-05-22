@@ -1,15 +1,141 @@
 # shellcheck shell=bash
 #
-# Git helpers: git_release (semver tag + push), git_push (add/commit/push),
-# git_init_repo (bootstrap a new repo). Run under bash and zsh.
+# lib/cli-git.sh — the `rec git` command group. Lazy-loaded by lib/cli.sh on the
+# first `rec git ...`. Runs under bash and zsh.
+#
+#   rec git sync [--force]   update the current repo with the latest code from origin
+#   rec git push [...]       stage everything, commit and push to the upstream
+#   rec git release [...]    create the next semver tag and push it
+#   rec git init --url=...   bootstrap a new repo and push it to GitHub
 
-# === Git release helper (semver) ===
-git_release() {
+__rec_git_dispatch() {
+  _rg_cmd="${1:-help}"
+  [ $# -gt 0 ] && shift
+  case "$_rg_cmd" in
+    sync) __rec_git_sync "$@" ;;
+    push) __rec_git_push "$@" ;;
+    release) __rec_git_release "$@" ;;
+    init) __rec_git_init "$@" ;;
+    help | --help | -h) __rec_git_help ;;
+    *)
+      printf 'rec git: unknown command "%s"\n\n' "$_rg_cmd" >&2
+      __rec_git_help >&2
+      return 2
+      ;;
+  esac
+}
+
+__rec_git_help() {
+  cat <<'EOF'
+rec git — git helpers
+
+Usage: rec git <command>
+
+Commands:
+  sync [--force]      Update the current repo with the latest code from origin
+                      (fetch + fast-forward). Refuses on local changes; --force
+                      discards them and hard-resets to origin.
+  push [...]          Stage everything, commit, and push to the upstream
+  release [...]       Create the next semver tag (vX.Y.Z) and push it
+  init --url=<url>    Initialize a new repo and push it to GitHub
+
+Run `rec git <command> --help` for command-specific options.
+EOF
+}
+
+# === rec git sync — bring the current repo up to date with origin ===
+__rec_git_sync() {
+  local FORCE=no arg
+  for arg in "$@"; do
+    case "$arg" in
+      -f | --force) FORCE=yes ;;
+      -h | --help)
+        cat <<'EOF'
+Usage: rec git sync [--force]
+
+Fetch origin and fast-forward the current branch to the latest code.
+Refuses when the working tree has uncommitted changes; --force discards
+local changes and hard-resets the branch to its origin counterpart.
+EOF
+        return 0
+        ;;
+    esac
+  done
+
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "❌ You are not in a Git repository."
+    return 1
+  fi
+  if ! git remote get-url origin >/dev/null 2>&1; then
+    echo "❌ No 'origin' remote configured."
+    return 1
+  fi
+
+  local BRANCH UPSTREAM
+  BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [ -z "$BRANCH" ] || [ "$BRANCH" = HEAD ]; then
+    echo "❌ Detached HEAD; check out a branch first."
+    return 1
+  fi
+  UPSTREAM="origin/$BRANCH"
+
+  echo "⏬  Fetching $UPSTREAM ..."
+  if ! git fetch --quiet --prune origin; then
+    echo "❌ Fetch failed (offline?)."
+    return 1
+  fi
+  if ! git rev-parse --verify --quiet "$UPSTREAM" >/dev/null; then
+    echo "❌ origin has no branch '$BRANCH'."
+    return 1
+  fi
+
+  local counts ahead behind
+  counts="$(git rev-list --left-right --count "HEAD...$UPSTREAM" 2>/dev/null)"
+  ahead="${counts%%[!0-9]*}"
+  behind="${counts##*[!0-9]}"
+  [ -n "$ahead" ] || ahead=0
+  [ -n "$behind" ] || behind=0
+
+  # --force: discard local state and match origin exactly (deploy pattern).
+  if [ "$FORCE" = yes ]; then
+    if ! git reset --hard "$UPSTREAM" >/dev/null; then
+      echo "❌ Reset failed."
+      return 1
+    fi
+    echo "🎉 Forced $BRANCH to $UPSTREAM ($(git rev-parse --short HEAD))."
+    return 0
+  fi
+
+  if [ "$behind" -eq 0 ]; then
+    echo "✅ Already up to date with $UPSTREAM."
+    return 0
+  fi
+
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "❌ You have uncommitted changes ($behind commit(s) behind)."
+    echo "   Commit or stash them, or run: rec git sync --force"
+    return 1
+  fi
+  if [ "$ahead" -gt 0 ]; then
+    echo "❌ Your branch has diverged ($ahead ahead, $behind behind)."
+    echo "   Push or rebase first, or run: rec git sync --force"
+    return 1
+  fi
+
+  if ! git merge --ff-only "$UPSTREAM" >/dev/null; then
+    echo "❌ Fast-forward failed."
+    return 1
+  fi
+  echo "🎉 Updated $BRANCH to $(git rev-parse --short HEAD) (+$behind commit(s))."
+}
+
+# === rec git release — next semver tag + push ===
+__rec_git_release() {
   local DEFAULT_START="v1.0.0"
   local REMOTE="origin"
   local BRANCH=""
   local SET_VERSION=""
-  local INCREMENT="auto" # auto | major | minor | patch
+  local INCREMENT="auto"
   local ALLOW_DIRTY="no"
   local DRY_RUN="no"
   local MESSAGE=""
@@ -31,17 +157,16 @@ git_release() {
       -m=*) MESSAGE="${arg#*=}" ;;
       -h | --help)
         cat <<'EOF'
-Usage: git_release [--v=1.2.3 | --major | --minor | --patch] [--start=1.0.0]
-                   [--remote=origin] [--branch=<name>] [--allow-dirty] [-n|--dry-run]
-                   [-m=message]
+Usage: rec git release [--v=1.2.3 | --major | --minor | --patch] [--start=1.0.0]
+                       [--remote=origin] [--branch=<name>] [--allow-dirty]
+                       [-n|--dry-run] [-m=message]
 
-Without options: autoincrement (vX.Y.0 after vX.(Y-1).9, otherwise vX.Y.(Z+1))
+Without options: autoincrement (vX.Y.0 after vX.(Y-1).9, otherwise vX.Y.(Z+1)).
 Examples:
-  git_release                 # v1.0.1 -> v1.0.2, v1.0.9 -> v1.1.0
-  git_release --v=1.2.0       # set directly to v1.2.0
-  git_release --minor         # bump minor (reset patch)
-  git_release --major         # bump major (reset minor/patch)
-  git_release -n              # show what it would do, without modifying repo
+  rec git release                 # v1.0.1 -> v1.0.2, v1.0.9 -> v1.1.0
+  rec git release --v=1.2.0       # set directly to v1.2.0
+  rec git release --minor         # bump minor (reset patch)
+  rec git release -n              # show what it would do, without changing the repo
 EOF
         return 0
         ;;
@@ -145,8 +270,8 @@ EOF
   echo "🎉 Done: $NEXT_TAG has been pushed to $REMOTE/$BRANCH."
 }
 
-# === Git quick push (add + commit + push) ===
-git_push() {
+# === rec git push — add + commit + push ===
+__rec_git_push() {
   local MSG=""
   local PREFIX="chore"
   local REMOTE=""
@@ -172,18 +297,16 @@ git_push() {
       -n | --dry-run) DRY_RUN="yes" ;;
       -h | --help)
         cat <<'EOF'
-Usage: push [-m "message"] [--prefix=chore|feat|fix|docs|refactor|style|test|perf]
-            [--remote=origin] [--branch=main] [--no-verify] [--signoff] [--amend]
-            [-n|--dry-run]
+Usage: rec git push [-m "message"] [--prefix=chore|feat|fix|docs|...]
+                    [--remote=origin] [--branch=main] [--no-verify] [--signoff]
+                    [--amend] [-n|--dry-run]
 
-Without options: stage everything, commit with a random message and push to upstream.
+Without options: stage everything, commit with a random message and push.
 Examples:
-  push
-  push -m "feat: import products"
-  push --prefix=fix
-  push --no-verify
-  push --amend               # amend the last commit
-  push -n                    # show what it would do
+  rec git push
+  rec git push -m "feat: import products"
+  rec git push --amend
+  rec git push -n
 EOF
         return 0
         ;;
@@ -248,8 +371,6 @@ EOF
     fi
   fi
 
-  # Build push flags as an array so an empty value never becomes an empty arg
-  # (avoids the bash/zsh unquoted-word-splitting difference).
   local PUSH_FLAGS=()
   [ "$SET_UPSTREAM" = "yes" ] && PUSH_FLAGS+=("-u")
 
@@ -264,8 +385,8 @@ EOF
   echo "✅  Pushed to $FINAL_REMOTE/$FINAL_BRANCH."
 }
 
-# === Git init helper for new repos ===
-git_init_repo() {
+# === rec git init — bootstrap a new repo and push to GitHub ===
+__rec_git_init() {
   local REPO_URL=""
   local BRANCH="main"
   local README_TEXT=""
@@ -281,14 +402,13 @@ git_init_repo() {
       -n | --dry-run) DRY_RUN="yes" ;;
       -h | --help)
         cat <<'EOF'
-Usage: git_init_repo --url=<github-url> [--branch=main] [--readme="text"] [--commit="first commit"] [-n|--dry-run]
+Usage: rec git init --url=<github-url> [--branch=main] [--readme="text"]
+                    [--commit="first commit"] [-n|--dry-run]
 
 Initialize a new Git repository and push to GitHub.
 Examples:
-  git_init_repo --url=https://github.com/user/repo.git
-  git_init_repo --url=https://github.com/user/repo.git --readme="My Project"
-  git_init_repo --url=https://github.com/user/repo.git --branch=master
-  git_init_repo -n --url=https://github.com/user/repo.git  # dry-run
+  rec git init --url=https://github.com/user/repo.git
+  rec git init --url=https://github.com/user/repo.git --readme="My Project"
 EOF
         return 0
         ;;
@@ -318,11 +438,8 @@ EOF
   if [ "$DRY_RUN" = "yes" ]; then
     echo "(dry-run) Commands that would be executed:"
     echo "  echo \"$README_TEXT\" >> README.md"
-    echo "  git init"
-    echo "  git add -A"
-    echo "  git commit -m \"$INITIAL_COMMIT\""
-    echo "  git branch -M $BRANCH"
-    echo "  git remote add origin $REPO_URL"
+    echo "  git init && git add -A && git commit -m \"$INITIAL_COMMIT\""
+    echo "  git branch -M $BRANCH && git remote add origin $REPO_URL"
     echo "  git push -u origin $BRANCH"
     return 0
   fi

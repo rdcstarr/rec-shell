@@ -35,13 +35,13 @@ load_in() {
 
 @test "bash: loader defines ported functions and the rec-shell command" {
   REC_SHELL_ARGS="--norc" load_in bash \
-    'command -v git_release && command -v hosts && command -v extract && command -v mkcd && command -v rec'
+    'command -v hosts && command -v extract && command -v mkcd && command -v rec'
   [ "$status" -eq 0 ]
 }
 
 @test "zsh: loader defines ported functions and the rec-shell command" {
   REC_SHELL_ARGS="-f" load_in zsh \
-    'command -v git_release && command -v hosts && command -v extract && command -v mkcd && command -v rec'
+    'command -v hosts && command -v extract && command -v mkcd && command -v rec'
   [ "$status" -eq 0 ]
 }
 
@@ -95,9 +95,23 @@ load_in() {
 
 @test "bash: a disabled module does not load" {
   mkdir -p "$REC_HOME/.config/rec-shell"
-  printf 'REC_DISABLED_MODULES="git"\n' >"$REC_HOME/.config/rec-shell/config"
-  REC_SHELL_ARGS="--norc" load_in bash 'command -v git_release'
-  [ "$status" -ne 0 ]
+  printf 'REC_DISABLED_MODULES="ssh"\n' >"$REC_HOME/.config/rec-shell/config"
+  REC_SHELL_ARGS="--norc" load_in bash 'command -v extract && ! command -v hosts'
+  [ "$status" -eq 0 ]
+}
+
+# --- rec git command group -------------------------------------------------
+
+@test "bash: rec git help lists the git commands" {
+  REC_SHELL_ARGS="--norc" load_in bash 'rec git help'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rec git"* && "$output" == *"sync"* ]]
+}
+
+@test "zsh: rec git dispatches (help)" {
+  REC_SHELL_ARGS="-f" load_in zsh 'rec git help'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"sync"* ]]
 }
 
 @test "zsh: disable then enable round-trips the config" {

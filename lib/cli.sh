@@ -15,6 +15,7 @@ __rec_dispatch() {
     doctor) __rec_cmd_doctor "$@" ;;
     enable) __rec_cmd_toggle enable "$@" ;;
     disable) __rec_cmd_toggle disable "$@" ;;
+    git) __rec_cmd_git "$@" ;;
     uninstall) __rec_cmd_uninstall "$@" ;;
     help | --help | -h) __rec_cmd_help ;;
     *)
@@ -208,6 +209,19 @@ __rec_config_set() {
   mv -f "$_rcs_tmp" "$REC_CONFIG_FILE"
 }
 
+# git command group, lazy-loaded from lib/cli-git.sh on first use.
+__rec_cmd_git() {
+  if ! command -v __rec_git_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-git.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-git.sh"
+    else
+      printf 'rec: git commands unavailable (missing lib/cli-git.sh)\n' >&2
+      return 1
+    fi
+  fi
+  __rec_git_dispatch "$@"
+}
+
 __rec_cmd_uninstall() {
   if [ -r "$REC_SHELL_DIR/uninstall.sh" ]; then
     sh "$REC_SHELL_DIR/uninstall.sh" "$@"
@@ -229,7 +243,8 @@ Commands:
   version           Show installed version, commit and shell/OS
   reload            Re-source rec-shell in the current shell
   doctor            Diagnose the installation
-  enable <module>   Re-enable a module (e.g. ssh, git, prompt, integrations)
+  git <command>     Git helpers: sync, push, release, init (see: rec git help)
+  enable <module>   Re-enable a module (e.g. ssh, prompt, integrations)
   disable <module>  Disable a module
   uninstall         Remove rec-shell (keeps your config; pass --purge to remove it)
   help              Show this help

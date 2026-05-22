@@ -56,16 +56,30 @@ Installer flags: `--user` (default), `--system`, `--unattended`, `--no-omp`,
 | `version` | Show installed version, commit and shell/OS |
 | `reload` | Re-source rec-shell in the current shell |
 | `doctor` | Diagnose the installation |
+| `git <command>` | Git helpers: `sync`, `push`, `release`, `init` (see below) |
 | `enable` / `disable <module>` | Toggle a module |
 | `uninstall` | Remove rec-shell (`--purge` also removes config) |
 
 ## What you get
 
 Prompt (oh-my-posh + per-host color), history tuning, colorized aliases and
-navigation shortcuts, completion, archive `extract`, `mkcd`, the git helpers
-`git_release` / `git_push` / `git_init_repo` (aliased `release` / `push` /
-`init-repo`), SSH `hosts` / `open_hosts`, and optional integrations (nvm,
-zoxide, …). See `modules/`.
+navigation shortcuts, completion, archive `extract`, `mkcd`, SSH `hosts` /
+`open_hosts`, and optional integrations (nvm, zoxide, …). See `modules/`.
+Git helpers live under `rec git` (below).
+
+## Git
+
+Git helpers are grouped under `rec git`:
+
+| Command | What it does |
+| --- | --- |
+| `rec git sync [--force]` | Update the current repo with the latest code from `origin` (fetch + fast-forward). Refuses on local changes; `--force` discards them and hard-resets to origin. |
+| `rec git push [...]` | Stage everything, commit, and push to the upstream |
+| `rec git release [...]` | Create the next semver tag (`vX.Y.Z`) and push it |
+| `rec git init --url=<url>` | Initialize a new repo and push it to GitHub |
+
+`rec git sync` is made for deploys — pull the newest code onto a server with one
+command. Run `rec git <command> --help` for options.
 
 ## Configuration
 

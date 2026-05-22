@@ -33,12 +33,4 @@ else
   alias top='htop 2>/dev/null || top'
 fi
 
-# Git shortcuts
-alias gs='git status'
-alias ga='git add'
-alias gc='git commit'
-alias gp='git push'
-alias gl='git log --oneline --graph'
-alias release='git_release'
-alias push='git_push'
-alias init-repo='git_init_repo'
+# Git is available as a command group: `rec git sync|push|release|init`.
