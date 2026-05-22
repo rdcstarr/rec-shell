@@ -1,0 +1,20 @@
+# rec-shell configuration.
+#
+# Copy this to:  ${XDG_CONFIG_HOME:-$HOME/.config}/rec-shell/config
+# It is sourced at startup and is NEVER touched by updates.
+
+# Space-separated module keys to disable (omit the NN- prefix and .sh).
+# Example: REC_DISABLED_MODULES="ssh integrations"
+# REC_DISABLED_MODULES=""
+
+# Update-check cadence: daily (default) | weekly | hourly | never
+# REC_UPDATE_CHECK="daily"
+
+# Override the check interval in seconds (wins over the cadence above).
+# REC_UPDATE_INTERVAL=86400
+
+# Override the oh-my-posh theme path.
+# REC_THEME="$HOME/.config/oh-my-posh/themes/recweb.omp.json"
+
+# Override the oh-my-posh binary location.
+# REC_OMP_BIN="/opt/homebrew/bin/oh-my-posh"

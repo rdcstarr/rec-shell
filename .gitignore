@@ -1,0 +1,18 @@
+# OS / editor cruft
+.DS_Store
+*.swp
+*~
+
+# Backups produced by the installer
+*.rec-shell.bak
+*.backup.*
+
+# Test scratch space
+/test/tmp/
+*.tmp
+
+# oh-my-posh runtime artifacts (must never be committed)
+*.omp.cache
+omp.cache
+init.*.zsh
+init.*.bash

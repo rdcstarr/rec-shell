@@ -1,0 +1,19 @@
+# shellcheck shell=bash
+#
+# <name> module — drop into modules/ as NN-<name>.sh and it auto-loads in
+# numeric order. Disable it with: REC_DISABLED_MODULES="<name>"
+#
+# Available at load time: $REC_SHELL_DIR, $REC_SHELL_NAME (zsh|bash), $REC_OS.
+#
+# Guidelines:
+#   - Write POSIX sh by default; branch only when a shell genuinely differs:
+#       if [ "$REC_SHELL_NAME" = zsh ]; then ...; else ...; fi
+#   - Key OS differences off $REC_OS (mac|linux), not the shell.
+#   - Guard external tools:  rec_have some-tool || return 0
+#   - Do NOT use `set -e` / `set -u` — you are in the user's interactive shell.
+#   - Don't rely on unquoted word-splitting ("$var"); zsh doesn't split it.
+
+# example() {
+#   rec_have some-tool || return 0
+#   echo "hello from the example module"
+# }
