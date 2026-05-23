@@ -20,10 +20,10 @@ jobs:
             https://github.com/mvdan/sh/releases/download/v3.13.1/shfmt_v3.13.1_linux_amd64
           sudo chmod +x /usr/local/bin/shfmt
       - name: shfmt (format check)
-        run: shfmt -d -i 2 -ci -bn rec-shell.sh install.sh uninstall.sh lib modules
+        run: shfmt -d -i 2 -ci -bn rec-shell.sh install.sh uninstall.sh lib modules scripts
       - name: shellcheck
         # Each file declares its dialect via `# shellcheck shell=...` or shebang.
-        run: shellcheck rec-shell.sh install.sh uninstall.sh lib/*.sh modules/*.sh
+        run: shellcheck rec-shell.sh install.sh uninstall.sh lib/*.sh modules/*.sh scripts/*.sh
 
   test:
     runs-on: ubuntu-latest

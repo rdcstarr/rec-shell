@@ -108,21 +108,28 @@ name). Available at load time: `$REC_SHELL_DIR`, `$REC_SHELL_NAME`
 ## Development
 
 ```sh
-shfmt -d -i 2 -ci -bn rec-shell.sh install.sh uninstall.sh lib modules
-shellcheck rec-shell.sh install.sh uninstall.sh lib/*.sh modules/*.sh
+shfmt -d -i 2 -ci -bn rec-shell.sh install.sh uninstall.sh lib modules scripts
+shellcheck rec-shell.sh install.sh uninstall.sh lib/*.sh modules/*.sh scripts/*.sh
 bats test/                 # runs in bash AND zsh
 ```
 
 `lib/*.sh` and `uninstall.sh` are POSIX sh (`# shellcheck shell=sh`); the loader,
-`modules/*.sh` and `install.sh` are bash. CI runs all of the above.
+`modules/*.sh`, `install.sh` and `scripts/*.sh` are bash. CI runs all of the above.
 
 ### Releasing
 
-1. Bump `VERSION` (e.g. `1.2.0`) and commit.
-2. Tag it: `git_release --v=1.2.0` (or `release`), which pushes `v1.2.0`.
+Run the release script from the dev repo — it bumps `VERSION`, commits, tags and
+pushes in one step:
 
-CI's `version-guard` fails the tag build if `VERSION` ≠ the tag, keeping the
-runtime version, the tag and the proxy's `/VERSION` in sync.
+```sh
+scripts/release.sh --patch    # 1.0.0 -> 1.0.1   (also --minor, --major, --v=X.Y.Z)
+scripts/release.sh -n         # preview, change nothing
+```
+
+This is separate from `rec git release` (generic, tag-only): the script owns the
+`VERSION` file that drives the update notification. CI's `version-guard` fails
+the tag build if `VERSION` ≠ the tag, so the runtime version, the tag and the
+proxy's `/VERSION` stay in sync.
 
 ## License
 
