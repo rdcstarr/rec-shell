@@ -15,20 +15,22 @@ REPO_URL="${REC_SHELL_REPO_URL:-https://github.com/rdcstarr/rec-shell.git}"
 REF="${REC_SHELL_REF:-}" # empty => latest tag (fallback: default branch)
 MODE=user
 UNATTENDED=0
-INSTALL_OMP=auto # auto | yes | no
+INSTALL_OMP=auto    # auto | yes | no
+INSTALL_ZOXIDE=auto # auto | yes | no
 TARGET_DIR="${REC_SHELL_DIR:-}"
 MARKER="# rec-shell"
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--user|--system] [--unattended] [--no-omp]
+Usage: install.sh [--user|--system] [--unattended] [--no-omp] [--no-zoxide]
                   [--dir DIR] [--ref REF]
 
   --user        Install for the current user in ~/.rec-shell (default).
   --system      Install system-wide in /opt/rec-shell and add the loader to
                 /etc rc files (all users). Must run as root.
-  --unattended  Never prompt; auto-install oh-my-posh if missing.
+  --unattended  Never prompt; auto-install oh-my-posh and zoxide if missing.
   --no-omp      Do not install oh-my-posh.
+  --no-zoxide   Do not install zoxide (the `z` smart-cd command).
   --dir DIR     Install into DIR instead of the default.
   --ref REF     Check out a specific tag/branch/commit (default: latest tag).
 
@@ -57,6 +59,7 @@ while [ $# -gt 0 ]; do
     --system) MODE=system ;;
     --unattended | -y) UNATTENDED=1 ;;
     --no-omp) INSTALL_OMP=no ;;
+    --no-zoxide) INSTALL_ZOXIDE=no ;;
     --dir)
       shift
       TARGET_DIR="${1:-}"
@@ -231,12 +234,43 @@ ensure_omp() {
   fi
 }
 
+ensure_zoxide() {
+  [ "$INSTALL_ZOXIDE" = no ] && return 0
+  command -v zoxide >/dev/null 2>&1 && {
+    log "zoxide already installed"
+    return 0
+  }
+  if [ "$UNATTENDED" -eq 0 ]; then
+    printf 'Install zoxide (the z smart-cd command)? [y/N] '
+    local ans=n
+    read -r ans </dev/tty 2>/dev/null || ans=n
+    case "$ans" in
+      y | Y | yes) ;;
+      *)
+        warn "Skipping zoxide; the 'z' command will be unavailable."
+        return 0
+        ;;
+    esac
+  fi
+  log "Installing zoxide..."
+  if [ "$OS" = mac ] && command -v brew >/dev/null 2>&1; then
+    brew install zoxide
+  else
+    local bindir=/usr/local/bin
+    [ "$(id -u)" -ne 0 ] && bindir="$HOME/.local/bin"
+    mkdir -p "$bindir"
+    curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh -s -- --bin-dir "$bindir" \
+      || warn "zoxide install failed; install it manually: https://github.com/ajeetdsouza/zoxide"
+  fi
+}
+
 # --- run -------------------------------------------------------------------
 log "Installing rec-shell (${C_B}${MODE}${C_0}) into ${C_B}${TARGET_DIR}${C_0}"
 ensure_git
 clone_or_update
 install_loader_lines
 ensure_omp
+ensure_zoxide
 
 VER="$(head -n1 "$TARGET_DIR/VERSION" 2>/dev/null || echo '?')"
 printf '\n%s✓ rec-shell %s installed.%s\n' "$C_G" "$VER" "$C_0"

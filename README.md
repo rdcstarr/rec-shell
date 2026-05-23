@@ -39,11 +39,12 @@ curl -fsSL https://rec-shell.recwebnetwork.com/install | sudo bash -s -- --syste
 Then restart your shell (or `exec $SHELL -l`) and run `rec doctor`.
 
 Installer flags: `--user` (default), `--system`, `--unattended`, `--no-omp`,
-`--dir DIR`, `--ref REF`. Overrides: `REC_SHELL_REPO_URL`, `REC_SHELL_REF`,
-`REC_SHELL_DIR`.
+`--no-zoxide`, `--dir DIR`, `--ref REF`. Overrides: `REC_SHELL_REPO_URL`,
+`REC_SHELL_REF`, `REC_SHELL_DIR`.
 
-> The prompt uses [oh-my-posh](https://ohmyposh.dev) with the bundled `recweb`
-> theme; the installer offers to install oh-my-posh if it is missing.
+> The installer offers to install [oh-my-posh](https://ohmyposh.dev) (the prompt,
+> with the bundled `recweb` theme) and [zoxide](https://github.com/ajeetdsouza/zoxide)
+> (the `z` smart-cd command) if they're missing — skip with `--no-omp` / `--no-zoxide`.
 
 ## Commands
 
