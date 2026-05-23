@@ -142,3 +142,15 @@ load_in() {
   [[ "$output" == *"$REC_HOME/.npm-global/bin"* ]]
   [[ "$output" == *"$REC_HOME/.local/share/pnpm"* ]]
 }
+
+# --- reload (the mechanism rec update uses to apply in-place) ---------------
+
+@test "bash: rec reload re-sources and keeps rec defined" {
+  REC_SHELL_ARGS="--norc" load_in bash 'rec reload >/dev/null 2>&1; command -v rec'
+  [ "$status" -eq 0 ]
+}
+
+@test "zsh: rec reload re-sources and keeps rec defined" {
+  REC_SHELL_ARGS="-f" load_in zsh 'rec reload >/dev/null 2>&1; command -v rec'
+  [ "$status" -eq 0 ]
+}

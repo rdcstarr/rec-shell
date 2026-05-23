@@ -110,7 +110,9 @@ __rec_cmd_update() {
   _rcu_new="$(rec_installed_version 2>/dev/null || echo '?')"
   command mkdir -p "$REC_CACHE_DIR" 2>/dev/null \
     && printf '%s\n%s\n' "$(date +%s)" "$_rcu_new" >"$REC_CACHE_FILE" 2>/dev/null
-  printf 'rec-shell updated to %s.\nRestart your shell or run: exec %s -l\n' "$_rcu_new" "${SHELL:-$REC_SHELL_NAME}"
+  printf 'rec-shell updated to %s.\n' "$_rcu_new"
+  # `rec` is a function in the live shell, so apply the update immediately.
+  __rec_cmd_reload
 }
 
 __rec_cmd_reload() {
