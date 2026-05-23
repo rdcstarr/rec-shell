@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 #
-# <name> module — drop into modules/ as NN-<name>.sh and it auto-loads in
-# numeric order. Disable it with: REC_DISABLED_MODULES="<name>"
+# <name> module — drop into modules/ as <name>.sh and it auto-loads
+# (alphabetically). Add a numeric NN- prefix only to force load order.
+# Disable with: REC_DISABLED_MODULES="<name>"
 #
 # Available at load time: $REC_SHELL_DIR, $REC_SHELL_NAME (zsh|bash), $REC_OS.
 #

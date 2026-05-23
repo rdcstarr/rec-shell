@@ -98,10 +98,12 @@ Existing `~/.zsh_aliases` / `~/.bash_aliases` are still sourced for back-compat.
 
 ## Add a module
 
-Drop `modules/NN-<name>.sh` (numeric prefix sets load order) — it loads
-automatically; disable it with `REC_DISABLED_MODULES="<name>"`. Available at
-load time: `$REC_SHELL_DIR`, `$REC_SHELL_NAME` (`zsh`|`bash`), `$REC_OS`
-(`mac`|`linux`). See `templates/module.template`.
+Drop `modules/<name>.sh` — it loads automatically. Modules load alphabetically;
+add a numeric `NN-` prefix only if you need to force load order (e.g.
+`30-foo.sh` loads before any unprefixed module). Disable a module with
+`REC_DISABLED_MODULES="<name>"` (the `NN-` prefix, if any, is not part of the
+name). Available at load time: `$REC_SHELL_DIR`, `$REC_SHELL_NAME`
+(`zsh`|`bash`), `$REC_OS` (`mac`|`linux`). See `templates/module.template`.
 
 ## Development
 

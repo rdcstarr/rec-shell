@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 #
-# Tests for modules/80-ddev.sh — the DDEV smart commands. A fake `ddev` (and,
+# Tests for modules/ddev.sh — the DDEV smart commands. A fake `ddev` (and,
 # where needed, a fake host binary) is put on PATH so routing can be asserted
 # without a real ddev install.
 
@@ -11,7 +11,7 @@ setup() {
   printf '#!/bin/sh\necho "DDEV: $*"\n' >"$T/bin/ddev"
   chmod +x "$T/bin/ddev"
   CORE="$REPO_ROOT/lib/core.sh"
-  MOD="$REPO_ROOT/modules/80-ddev.sh"
+  MOD="$REPO_ROOT/modules/ddev.sh"
 }
 
 teardown() {
