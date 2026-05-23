@@ -2,8 +2,8 @@
 #
 # rec-shell installer.
 #
-#   curl -fsSL https://rec-shell.recwebnetwork.com/install | bash
-#   curl -fsSL https://rec-shell.recwebnetwork.com/install | sudo bash -s -- --system
+#   curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | bash
+#   curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | sudo bash -s -- --system
 #
 # Clones the repo into a directory and adds ONE loader line to your shell rc.
 # It never overwrites your rc; the line is idempotent and your rc is backed up
@@ -95,7 +95,7 @@ if [ "$MODE" = system ]; then
   TARGET_DIR="${TARGET_DIR:-/opt/rec-shell}"
   if [ "$(id -u)" -ne 0 ]; then
     die "System install must run as root:
-  curl -fsSL https://rec-shell.recwebnetwork.com/install | sudo bash -s -- --system"
+  curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | sudo bash -s -- --system"
   fi
 else
   TARGET_DIR="${TARGET_DIR:-$HOME/.rec-shell}"
