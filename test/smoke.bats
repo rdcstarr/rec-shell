@@ -114,6 +114,20 @@ load_in() {
   [[ "$output" == *"sync"* ]]
 }
 
+# bare `rec` opens an interactive picker on a TTY; with no TTY (here) it must
+# fall back to the textual help rather than hang.
+@test "bash: bare rec falls back to help when not a TTY" {
+  REC_SHELL_ARGS="--norc" load_in bash 'rec </dev/null'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Commands"* && "$output" == *"doctor"* ]]
+}
+
+@test "zsh: bare rec falls back to help when not a TTY" {
+  REC_SHELL_ARGS="-f" load_in zsh 'rec </dev/null'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Commands"* && "$output" == *"doctor"* ]]
+}
+
 @test "zsh: disable then enable round-trips the config" {
   REC_SHELL_ARGS="-f" load_in zsh \
     'rec disable ssh >/dev/null; rec enable ssh >/dev/null; cat "$XDG_CONFIG_HOME/rec-shell/config"'
@@ -153,4 +167,20 @@ load_in() {
 @test "zsh: rec reload re-sources and keeps rec defined" {
   REC_SHELL_ARGS="-f" load_in zsh 'rec reload >/dev/null 2>&1; command -v rec'
   [ "$status" -eq 0 ]
+}
+
+# reload must drop the lazily-loaded CLI groups so a subsequent `rec ...`
+# re-sources the freshly updated code (regression: stale cli.sh after update).
+@test "bash: rec reload drops the lazy CLI so updated code reloads" {
+  REC_SHELL_ARGS="--norc" load_in bash \
+    'rec version >/dev/null 2>&1; rec reload >/dev/null 2>&1; command -v __rec_dispatch >/dev/null && echo STALE || echo FRESH'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"FRESH"* ]]
+}
+
+@test "zsh: rec reload drops the lazy CLI so updated code reloads" {
+  REC_SHELL_ARGS="-f" load_in zsh \
+    'rec version >/dev/null 2>&1; rec reload >/dev/null 2>&1; command -v __rec_dispatch >/dev/null && echo STALE || echo FRESH'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"FRESH"* ]]
 }

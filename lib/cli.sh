@@ -5,8 +5,13 @@
 # (see rec-shell.sh) so it costs nothing at shell startup.
 
 __rec_dispatch() {
-  _rc_cmd="${1:-help}"
-  [ $# -gt 0 ] && shift
+  # Bare `rec` on a terminal opens the interactive command picker.
+  if [ $# -eq 0 ]; then
+    __rec_cmd_menu
+    return $?
+  fi
+  _rc_cmd="$1"
+  shift
   case "$_rc_cmd" in
     update) __rec_cmd_update "$@" ;;
     check) __rec_cmd_check "$@" ;;
@@ -125,6 +130,10 @@ __rec_cmd_update() {
 __rec_cmd_reload() {
   unset REC_SHELL_LOADED
   . "$REC_SHELL_DIR/rec-shell.sh"
+  # The CLI groups are lazy-loaded and cached on first use; drop them so the
+  # next `rec ...` re-sources the freshly updated code instead of the stale
+  # functions still in memory (otherwise `rec update` wouldn't take effect).
+  unset -f __rec_dispatch __rec_git_dispatch 2>/dev/null
   rec_ui_ok "rec-shell reloaded ($(rec_installed_version 2>/dev/null || echo '?'))."
 }
 
@@ -347,4 +356,26 @@ __rec_help_row() {
   printf '  '
   __rec_ui_emit 1 "$REC_UI_S_CYAN" "$(printf '%-18s' "$1")"
   printf ' %s\n' "$2"
+}
+
+# Bare `rec` on a terminal: an interactive command picker (arrows + enter).
+# Non-interactive (scripts, pipes): fall back to the textual help.
+__rec_cmd_menu() {
+  if ! rec_ui_interactive_load || ! __rec_ui_interactive; then
+    __rec_cmd_help
+    return 0
+  fi
+  _rcm_choice="$(rec_ui_select 'Pick a command' \
+    'doctor    - diagnose the installation' \
+    'version   - show version, commit, shell/OS' \
+    'check     - check for a newer version' \
+    'update    - update to the latest release' \
+    'reload    - re-source rec-shell' \
+    'git       - git helpers (sync/push/release/init)' \
+    'enable    - re-enable a module (picker)' \
+    'disable   - disable a module (picker)' \
+    'help      - show full help')"
+  [ -n "$_rcm_choice" ] || return 0
+  _rcm_cmd="${_rcm_choice%% *}"
+  __rec_dispatch "$_rcm_cmd"
 }

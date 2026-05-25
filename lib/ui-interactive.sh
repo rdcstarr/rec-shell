@@ -16,8 +16,11 @@
 # --- gates & primitives ----------------------------------------------------
 
 # __rec_ui_interactive -> 0 only when we can safely drive a TUI on this term.
+# We require a terminal on stdin (we read keys) and stderr (we draw the UI);
+# stdout is deliberately NOT required, so `value=$(rec_ui_select ...)` still
+# shows the menu when the result is captured via command substitution.
 __rec_ui_interactive() {
-  [ -t 0 ] && [ -t 1 ] || return 1
+  [ -t 0 ] && [ -t 2 ] || return 1
   [ -n "${REC_UI_PLAIN:-}" ] && return 1
   case "${TERM:-}" in
     dumb | '') return 1 ;;
