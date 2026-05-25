@@ -21,6 +21,7 @@ __rec_dispatch() {
     enable) __rec_cmd_toggle enable "$@" ;;
     disable) __rec_cmd_toggle disable "$@" ;;
     git) __rec_cmd_git "$@" ;;
+    ssh) __rec_cmd_ssh "$@" ;;
     uninstall) __rec_cmd_uninstall "$@" ;;
     help | --help | -h) __rec_cmd_help ;;
     *)
@@ -143,7 +144,7 @@ __rec_cmd_reload() {
   # The CLI groups are lazy-loaded and cached on first use; drop them so the
   # next `rec ...` re-sources the freshly updated code instead of the stale
   # functions still in memory (otherwise `rec update` wouldn't take effect).
-  unset -f __rec_dispatch __rec_git_dispatch 2>/dev/null
+  unset -f __rec_dispatch __rec_git_dispatch __rec_ssh_dispatch 2>/dev/null
   rec_ui_ok "rec-shell reloaded ($(rec_installed_version 2>/dev/null || echo '?'))."
 }
 
@@ -327,6 +328,19 @@ __rec_cmd_git() {
   __rec_git_dispatch "$@"
 }
 
+# ssh command group, lazy-loaded from lib/cli-ssh.sh on first use.
+__rec_cmd_ssh() {
+  if ! command -v __rec_ssh_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-ssh.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-ssh.sh"
+    else
+      rec_ui_err 'ssh commands unavailable (missing lib/cli-ssh.sh)'
+      return 1
+    fi
+  fi
+  __rec_ssh_dispatch "$@"
+}
+
 __rec_cmd_uninstall() {
   if [ -r "$REC_SHELL_DIR/uninstall.sh" ]; then
     sh "$REC_SHELL_DIR/uninstall.sh" "$@"
@@ -355,6 +369,7 @@ __rec_cmd_help() {
   __rec_help_row "reload" "Re-source rec-shell in the current shell"
   __rec_help_row "doctor" "Diagnose the installation"
   __rec_help_row "git <command>" "Git helpers: sync, push, release, init"
+  __rec_help_row "ssh [alias]" "SSH host picker; add/fav/edit (no arg: picker)"
   __rec_help_row "enable [module]" "Re-enable a module (no arg: interactive picker)"
   __rec_help_row "disable [module]" "Disable a module (no arg: interactive picker)"
   __rec_help_row "uninstall" "Remove rec-shell (--purge also removes config)"
@@ -382,6 +397,7 @@ __rec_cmd_menu() {
     'update    - update to the latest release' \
     'reload    - re-source rec-shell' \
     'git       - git helpers (sync/push/release/init)' \
+    'ssh       - SSH host picker (connect/add/favorite)' \
     'enable    - re-enable a module (picker)' \
     'disable   - disable a module (picker)' \
     'help      - show full help')"

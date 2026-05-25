@@ -114,6 +114,19 @@ load_in() {
   [[ "$output" == *"sync"* ]]
 }
 
+# rec ssh: exercises the full lazy chain rec -> cli.sh -> cli-ssh.sh.
+@test "bash: rec ssh help lists the ssh commands" {
+  REC_SHELL_ARGS="--norc" load_in bash 'rec ssh help'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rec ssh"* && "$output" == *"add"* ]]
+}
+
+@test "zsh: rec ssh dispatches (help)" {
+  REC_SHELL_ARGS="-f" load_in zsh 'rec ssh help'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"add"* ]]
+}
+
 # bare `rec` opens an interactive picker on a TTY; with no TTY (here) it must
 # fall back to the textual help rather than hang.
 @test "bash: bare rec falls back to help when not a TTY" {
@@ -181,6 +194,13 @@ load_in() {
 @test "zsh: rec reload drops the lazy CLI so updated code reloads" {
   REC_SHELL_ARGS="-f" load_in zsh \
     'rec version >/dev/null 2>&1; rec reload >/dev/null 2>&1; command -v __rec_dispatch >/dev/null && echo STALE || echo FRESH'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"FRESH"* ]]
+}
+
+@test "bash: rec reload also drops the lazy ssh group" {
+  REC_SHELL_ARGS="--norc" load_in bash \
+    'rec ssh help >/dev/null 2>&1; rec reload >/dev/null 2>&1; command -v __rec_ssh_dispatch >/dev/null && echo STALE || echo FRESH'
   [ "$status" -eq 0 ]
   [[ "$output" == *"FRESH"* ]]
 }
