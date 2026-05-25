@@ -33,13 +33,16 @@ __rec_cmd_version() {
   if [ -d "$REC_SHELL_DIR/.git" ] && rec_have git; then
     _rcv_sha="$(git -C "$REC_SHELL_DIR" rev-parse --short HEAD 2>/dev/null)"
   fi
-  printf 'rec-shell '
+  __rec_ui_emit 1 "$REC_UI_S_BOLD" "rec-shell"
+  printf ' '
   __rec_ui_emit 1 "$REC_UI_S_CYAN" "$_rcv_ver"
   if [ -n "$_rcv_sha" ]; then
-    printf ' (%s) — %s on %s\n' "$_rcv_sha" "$REC_SHELL_NAME" "$REC_OS"
-  else
-    printf ' — %s on %s\n' "$REC_SHELL_NAME" "$REC_OS"
+    printf ' '
+    __rec_ui_emit 1 "$REC_UI_S_DIM" "($_rcv_sha)"
   fi
+  printf ' '
+  __rec_ui_emit 1 "$REC_UI_S_DIM" "— $REC_SHELL_NAME on $REC_OS"
+  printf '\n'
 }
 
 __rec_cmd_check() {
@@ -315,21 +318,33 @@ __rec_cmd_uninstall() {
 }
 
 __rec_cmd_help() {
-  cat <<'EOF'
-rec-shell — modern bash & zsh configuration
+  __rec_ui_emit 1 "$REC_UI_S_BOLD" "rec-shell"
+  printf ' '
+  __rec_ui_emit 1 "$REC_UI_S_CYAN" "$(rec_installed_version 2>/dev/null || echo '?')"
+  printf '\n'
+  __rec_ui_emit 1 "$REC_UI_S_DIM" "modern bash & zsh configuration"
+  printf '\n\n'
+  __rec_ui_emit 1 "$REC_UI_S_DIM" "Usage:"
+  printf ' rec <command>'
+  __rec_ui_emit 1 "$REC_UI_S_DIM" "   (rec-shell also works)"
+  printf '\n\n'
+  __rec_ui_emit 1 "$REC_UI_S_BOLD" "Commands"
+  printf '\n'
+  __rec_help_row "update" "Update to the latest released version (newest tag)"
+  __rec_help_row "check" "Check now whether a newer version is available"
+  __rec_help_row "version" "Show installed version, commit and shell/OS"
+  __rec_help_row "reload" "Re-source rec-shell in the current shell"
+  __rec_help_row "doctor" "Diagnose the installation"
+  __rec_help_row "git <command>" "Git helpers: sync, push, release, init"
+  __rec_help_row "enable [module]" "Re-enable a module (no arg: interactive picker)"
+  __rec_help_row "disable [module]" "Disable a module (no arg: interactive picker)"
+  __rec_help_row "uninstall" "Remove rec-shell (--purge also removes config)"
+  __rec_help_row "help" "Show this help"
+}
 
-Usage: rec <command>     (rec-shell also works)
-
-Commands:
-  update            Update to the latest released version (git pull to newest tag)
-  check             Check now whether a newer version is available
-  version           Show installed version, commit and shell/OS
-  reload            Re-source rec-shell in the current shell
-  doctor            Diagnose the installation
-  git <command>     Git helpers: sync, push, release, init (see: rec git help)
-  enable <module>   Re-enable a module (e.g. ssh, prompt, integrations)
-  disable <module>  Disable a module
-  uninstall         Remove rec-shell (keeps your config; pass --purge to remove it)
-  help              Show this help
-EOF
+# __rec_help_row NAME DESCRIPTION -> a command name (accent) + its description.
+__rec_help_row() {
+  printf '  '
+  __rec_ui_emit 1 "$REC_UI_S_CYAN" "$(printf '%-18s' "$1")"
+  printf ' %s\n' "$2"
 }
