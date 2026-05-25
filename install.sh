@@ -38,18 +38,62 @@ Environment overrides: REC_SHELL_REPO_URL, REC_SHELL_REF, REC_SHELL_DIR
 EOF
 }
 
-# --- pretty output ---------------------------------------------------------
-if [ -t 1 ]; then
-  C_B="$(printf '\033[1m')" C_G="$(printf '\033[32m')" C_Y="$(printf '\033[33m')" C_R="$(printf '\033[31m')" C_0="$(printf '\033[0m')"
+# --- pretty output (kept visually in sync with lib/ui.sh) ------------------
+# This installer runs standalone via `curl | bash`, before lib/ui.sh exists, so
+# it carries its own tiny copy of the rec-shell look: minimal glyphs + color
+# that honors NO_COLOR / CLICOLOR_FORCE and falls back to ASCII off a TTY.
+if [ -n "${NO_COLOR+x}" ] || [ -n "${REC_NO_COLOR:-}" ]; then
+  _ui_color=0
+elif [ -n "${CLICOLOR_FORCE:-}" ] && [ "${CLICOLOR_FORCE}" != 0 ]; then
+  _ui_color=1
+elif [ -t 1 ]; then
+  _ui_color=1
 else
-  C_B="" C_G="" C_Y="" C_R="" C_0=""
+  _ui_color=0
 fi
-log() { printf '%s==>%s %s\n' "$C_G" "$C_0" "$*"; }
-warn() { printf '%s[warn]%s %s\n' "$C_Y" "$C_0" "$*" >&2; }
-err() { printf '%s[error]%s %s\n' "$C_R" "$C_0" "$*" >&2; }
+if [ "$_ui_color" = 1 ]; then
+  C_B="$(printf '\033[1m')" C_G="$(printf '\033[32m')" C_Y="$(printf '\033[33m')" C_R="$(printf '\033[31m')" C_C="$(printf '\033[36m')" C_0="$(printf '\033[0m')"
+else
+  C_B="" C_G="" C_Y="" C_R="" C_C="" C_0=""
+fi
+case "${REC_UI_ASCII:-}" in
+  1 | yes | true | on) _ui_utf=0 ;;
+  *)
+    case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+      *[Uu][Tt][Ff]8* | *[Uu][Tt][Ff]-8*) _ui_utf=1 ;;
+      *) _ui_utf=0 ;;
+    esac
+    ;;
+esac
+if [ "$_ui_utf" = 1 ]; then
+  G_OK='✓' G_WARN='⚠' G_ERR='✗' G_ARROW='➜'
+else
+  G_OK='[ok]' G_WARN='[!]' G_ERR='[x]' G_ARROW='->'
+fi
+log() { printf '%s%s%s %s\n' "$C_C" "$G_ARROW" "$C_0" "$*"; }
+ok() { printf '%s%s%s %s\n' "$C_G" "$G_OK" "$C_0" "$*"; }
+warn() { printf '%s%s%s %s\n' "$C_Y" "$G_WARN" "$C_0" "$*" >&2; }
+err() { printf '%s%s%s %s\n' "$C_R" "$G_ERR" "$C_0" "$*" >&2; }
 die() {
   err "$*"
   exit 1
+}
+
+# confirm PROMPT [yes|no] -> 0/1. Reads /dev/tty so it works under `curl | bash`
+# (where stdin is the pipe); returns the default when no terminal is attached.
+confirm() {
+  local def="${2:-no}" hint ret ans=""
+  case "$def" in
+    y | Y | yes | YES) hint="[Y/n]" ret=0 ;;
+    *) hint="[y/N]" ret=1 ;;
+  esac
+  printf '%s%s%s %s %s ' "$C_C" "$G_ARROW" "$C_0" "$1" "$hint"
+  read -r ans </dev/tty 2>/dev/null || ans=""
+  case "$ans" in
+    '') return "$ret" ;;
+    y | Y | yes | YES) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # --- parse args ------------------------------------------------------------
@@ -208,16 +252,10 @@ ensure_omp() {
     return 0
   }
   if [ "$UNATTENDED" -eq 0 ]; then
-    printf 'Install oh-my-posh now (required for the prompt)? [y/N] '
-    local ans=n
-    read -r ans </dev/tty 2>/dev/null || ans=n
-    case "$ans" in
-      y | Y | yes) ;;
-      *)
-        warn "Skipping oh-my-posh; the prompt will be inactive until it is installed."
-        return 0
-        ;;
-    esac
+    if ! confirm 'Install oh-my-posh now (required for the prompt)?' no; then
+      warn "Skipping oh-my-posh; the prompt will be inactive until it is installed."
+      return 0
+    fi
   fi
   log "Installing oh-my-posh..."
   if [ "$OS" = mac ]; then
@@ -241,16 +279,10 @@ ensure_zoxide() {
     return 0
   }
   if [ "$UNATTENDED" -eq 0 ]; then
-    printf 'Install zoxide (the z smart-cd command)? [y/N] '
-    local ans=n
-    read -r ans </dev/tty 2>/dev/null || ans=n
-    case "$ans" in
-      y | Y | yes) ;;
-      *)
-        warn "Skipping zoxide; the 'z' command will be unavailable."
-        return 0
-        ;;
-    esac
+    if ! confirm 'Install zoxide (the z smart-cd command)?' no; then
+      warn "Skipping zoxide; the 'z' command will be unavailable."
+      return 0
+    fi
   fi
   log "Installing zoxide..."
   if [ "$OS" = mac ] && command -v brew >/dev/null 2>&1; then
@@ -273,6 +305,7 @@ ensure_omp
 ensure_zoxide
 
 VER="$(head -n1 "$TARGET_DIR/VERSION" 2>/dev/null || echo '?')"
-printf '\n%s✓ rec-shell %s installed.%s\n' "$C_G" "$VER" "$C_0"
+printf '\n'
+ok "rec-shell $VER installed."
 printf 'Restart your shell, or run: %sexec %s -l%s\n' "$C_B" "${SHELL:-bash}" "$C_0"
 printf 'Then check it with: %srec doctor%s\n' "$C_B" "$C_0"

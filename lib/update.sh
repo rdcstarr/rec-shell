@@ -66,9 +66,21 @@ rec_update_refresh() {
 }
 
 # rec_update_banner VERSION -> one-line nudge, on stderr so it never pollutes
-# command substitution that captures stdout.
+# command substitution that captures stdout. Uses the UI toolkit when present
+# (colors auto-off when stderr is not a TTY); falls back to plain text on a
+# partial install so the "<version> available" hint always shows.
 rec_update_banner() {
-  printf '\033[33mrec-shell %s available\033[0m — run: \033[1mrec update\033[0m\n' "$1" >&2
+  if ! command -v __rec_ui_emit >/dev/null 2>&1; then
+    printf 'rec-shell %s available — run: rec update\n' "$1" >&2
+    return
+  fi
+  {
+    __rec_ui_emit 2 "$REC_UI_S_YELLOW" "rec-shell $1 available"
+    printf ' %s ' "$REC_UI_G_ARROW"
+    __rec_ui_emit 2 "$REC_UI_S_DIM" 'run:'
+    __rec_ui_emit 2 "$REC_UI_S_BOLD" ' rec update'
+    printf '\n'
+  } >&2
 }
 
 # rec_update_startup -> called once per interactive shell by the loader.

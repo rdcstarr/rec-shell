@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 #
 # lib/cli-git.sh — the `rec git` command group. Lazy-loaded by lib/cli.sh on the
-# first `rec git ...`. Runs under bash and zsh.
+# first `rec git ...`. Runs under bash and zsh. Output goes through the rec-shell
+# UI toolkit (lib/ui.sh), so it is consistent and colors auto-off when piped.
 #
 #   rec git sync [--force]   update the current repo with the latest code from origin
 #   rec git push [...]       stage everything, commit and push to the upstream
@@ -18,7 +19,8 @@ __rec_git_dispatch() {
     init) __rec_git_init "$@" ;;
     help | --help | -h) __rec_git_help ;;
     *)
-      printf 'rec git: unknown command "%s"\n\n' "$_rg_cmd" >&2
+      rec_ui_err "rec git: unknown command \"$_rg_cmd\""
+      printf '\n' >&2
       __rec_git_help >&2
       return 2
       ;;
@@ -63,29 +65,29 @@ EOF
   done
 
   if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "❌ You are not in a Git repository."
+    rec_ui_err "You are not in a Git repository."
     return 1
   fi
   if ! git remote get-url origin >/dev/null 2>&1; then
-    echo "❌ No 'origin' remote configured."
+    rec_ui_err "No 'origin' remote configured."
     return 1
   fi
 
   local BRANCH UPSTREAM
   BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
   if [ -z "$BRANCH" ] || [ "$BRANCH" = HEAD ]; then
-    echo "❌ Detached HEAD; check out a branch first."
+    rec_ui_err "Detached HEAD; check out a branch first."
     return 1
   fi
   UPSTREAM="origin/$BRANCH"
 
-  echo "⏬  Fetching $UPSTREAM ..."
+  rec_ui_step "Fetching $UPSTREAM ..."
   if ! git fetch --quiet --prune origin; then
-    echo "❌ Fetch failed (offline?)."
+    rec_ui_err "Fetch failed (offline?)."
     return 1
   fi
   if ! git rev-parse --verify --quiet "$UPSTREAM" >/dev/null; then
-    echo "❌ origin has no branch '$BRANCH'."
+    rec_ui_err "origin has no branch '$BRANCH'."
     return 1
   fi
 
@@ -99,34 +101,34 @@ EOF
   # --force: discard local state and match origin exactly (deploy pattern).
   if [ "$FORCE" = yes ]; then
     if ! git reset --hard "$UPSTREAM" >/dev/null; then
-      echo "❌ Reset failed."
+      rec_ui_err "Reset failed."
       return 1
     fi
-    echo "🎉 Forced $BRANCH to $UPSTREAM ($(git rev-parse --short HEAD))."
+    rec_ui_ok "Forced $BRANCH to $UPSTREAM ($(git rev-parse --short HEAD))."
     return 0
   fi
 
   if [ "$behind" -eq 0 ]; then
-    echo "✅ Already up to date with $UPSTREAM."
+    rec_ui_ok "Already up to date with $UPSTREAM."
     return 0
   fi
 
   if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "❌ You have uncommitted changes ($behind commit(s) behind)."
-    echo "   Commit or stash them, or run: rec git sync --force"
+    rec_ui_err "You have uncommitted changes ($behind commit(s) behind)."
+    printf '   %s\n' "Commit or stash them, or run: rec git sync --force" >&2
     return 1
   fi
   if [ "$ahead" -gt 0 ]; then
-    echo "❌ Your branch has diverged ($ahead ahead, $behind behind)."
-    echo "   Push or rebase first, or run: rec git sync --force"
+    rec_ui_err "Your branch has diverged ($ahead ahead, $behind behind)."
+    printf '   %s\n' "Push or rebase first, or run: rec git sync --force" >&2
     return 1
   fi
 
   if ! git merge --ff-only "$UPSTREAM" >/dev/null; then
-    echo "❌ Fast-forward failed."
+    rec_ui_err "Fast-forward failed."
     return 1
   fi
-  echo "🎉 Updated $BRANCH to $(git rev-parse --short HEAD) (+$behind commit(s))."
+  rec_ui_ok "Updated $BRANCH to $(git rev-parse --short HEAD) (+$behind commit(s))."
 }
 
 # === rec git release — next semver tag + push ===
@@ -174,7 +176,7 @@ EOF
   done
 
   if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "❌ You are not in a Git repository."
+    rec_ui_err "You are not in a Git repository."
     return 1
   fi
 
@@ -182,7 +184,7 @@ EOF
 
   if [ "$ALLOW_DIRTY" = "no" ]; then
     if ! git diff --quiet || ! git diff --cached --quiet; then
-      echo "❌ Working tree has uncommitted changes. Use --allow-dirty if intentional."
+      rec_ui_err "Working tree has uncommitted changes. Use --allow-dirty if intentional."
       return 1
     fi
   fi
@@ -194,7 +196,7 @@ EOF
   if [ -n "$SET_VERSION" ]; then
     [[ "$SET_VERSION" =~ ^v ]] || SET_VERSION="v$SET_VERSION"
     if [[ ! "$SET_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      echo "❌ Invalid version: $SET_VERSION (expected: vX.Y.Z or X.Y.Z)"
+      rec_ui_err "Invalid version: $SET_VERSION (expected: vX.Y.Z or X.Y.Z)"
       return 1
     fi
     NEXT_TAG="$SET_VERSION"
@@ -202,7 +204,7 @@ EOF
     local BASE="${LAST_TAG:-$DEFAULT_START}"
     [[ "$BASE" =~ ^v ]] || BASE="v$BASE"
     if [[ ! "$BASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      echo "❌ Last tag is not semver (vX.Y.Z): $BASE"
+      rec_ui_err "Last tag is not semver (vX.Y.Z): $BASE"
       return 1
     fi
 
@@ -240,34 +242,34 @@ EOF
   fi
 
   if git rev-parse "$NEXT_TAG" >/dev/null 2>&1; then
-    echo "❌ Tag $NEXT_TAG already exists."
+    rec_ui_err "Tag $NEXT_TAG already exists."
     return 1
   fi
 
   local MSG="${MESSAGE:-$NEXT_TAG}"
 
-  echo "➡️  Branch: $BRANCH"
-  echo "➡️  Remote: $REMOTE"
-  echo "➡️  Last tag: ${LAST_TAG:-(none)}"
-  echo "✅  Next tag: $NEXT_TAG"
-  echo "📝  Message: $MSG"
+  rec_ui_kv "Branch" "$BRANCH"
+  rec_ui_kv "Remote" "$REMOTE"
+  rec_ui_kv "Last tag" "${LAST_TAG:-(none)}"
+  rec_ui_ok "Next tag: $NEXT_TAG"
+  rec_ui_kv "Message" "$MSG"
   [ "$DRY_RUN" = "yes" ] && {
-    echo "(dry-run) Not creating tag and not pushing."
+    rec_ui_info "(dry-run) Not creating tag and not pushing."
     return 0
   }
 
   if ! git tag -a "$NEXT_TAG" -m "$MSG"; then
-    echo "❌ Error in 'git tag'."
+    rec_ui_err "Error in 'git tag'."
     return 1
   fi
 
   if ! git push --atomic "$REMOTE" "$BRANCH" "$NEXT_TAG"; then
-    echo "❌ Error in push. Deleting local tag created."
+    rec_ui_err "Error in push. Deleting local tag created."
     git tag -d "$NEXT_TAG" >/dev/null 2>&1
     return 1
   fi
 
-  echo "🎉 Done: $NEXT_TAG has been pushed to $REMOTE/$BRANCH."
+  rec_ui_ok "Done: $NEXT_TAG has been pushed to $REMOTE/$BRANCH."
 }
 
 # === rec git push — add + commit + push ===
@@ -315,7 +317,7 @@ EOF
   done
 
   if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "❌ You are not in a Git repository."
+    rec_ui_err "You are not in a Git repository."
     return 1
   fi
 
@@ -336,11 +338,11 @@ EOF
   [ -z "$BRANCH_FROM_UPSTREAM" ] && SET_UPSTREAM="yes"
 
   if [ -z "$(git status --porcelain)" ] && [ "$AMEND" = "no" ]; then
-    echo "ℹ️  No changes to push."
+    rec_ui_info "No changes to push."
     return 0
   fi
 
-  echo "➕  git add -A"
+  rec_ui_step "git add -A"
   [ "$DRY_RUN" = "yes" ] || git add -A
 
   if [ -z "$MSG" ] && [ "$AMEND" = "no" ]; then
@@ -355,17 +357,17 @@ EOF
 
   if [ "$AMEND" = "yes" ]; then
     if [ -n "$MSG" ]; then
-      echo "📝  git commit --amend -m \"$MSG\" ${COMMIT_ARGS[*]}"
+      rec_ui_step "git commit --amend -m \"$MSG\" ${COMMIT_ARGS[*]}"
       [ "$DRY_RUN" = "yes" ] || git commit --amend -m "$MSG" "${COMMIT_ARGS[@]}"
     else
-      echo "📝  git commit --amend --no-edit ${COMMIT_ARGS[*]}"
+      rec_ui_step "git commit --amend --no-edit ${COMMIT_ARGS[*]}"
       [ "$DRY_RUN" = "yes" ] || git commit --amend --no-edit "${COMMIT_ARGS[@]}"
     fi
   else
-    echo "📝  git commit -m \"$MSG\" ${COMMIT_ARGS[*]}"
+    rec_ui_step "git commit -m \"$MSG\" ${COMMIT_ARGS[*]}"
     if [ "$DRY_RUN" != "yes" ]; then
       if ! git commit -m "$MSG" "${COMMIT_ARGS[@]}"; then
-        echo "❌ Commit failed (maybe no changes)."
+        rec_ui_err "Commit failed (maybe no changes)."
         return 1
       fi
     fi
@@ -374,15 +376,15 @@ EOF
   local PUSH_FLAGS=()
   [ "$SET_UPSTREAM" = "yes" ] && PUSH_FLAGS+=("-u")
 
-  echo "🚀  git push ${PUSH_FLAGS[*]} \"$FINAL_REMOTE\" \"$FINAL_BRANCH\""
+  rec_ui_step "git push ${PUSH_FLAGS[*]} \"$FINAL_REMOTE\" \"$FINAL_BRANCH\""
   [ "$DRY_RUN" = "yes" ] && return 0
 
   if ! git push "${PUSH_FLAGS[@]}" "$FINAL_REMOTE" "$FINAL_BRANCH"; then
-    echo "❌ Error while pushing."
+    rec_ui_err "Error while pushing."
     return 1
   fi
 
-  echo "✅  Pushed to $FINAL_REMOTE/$FINAL_BRANCH."
+  rec_ui_ok "Pushed to $FINAL_REMOTE/$FINAL_BRANCH."
 }
 
 # === rec git init — bootstrap a new repo and push to GitHub ===
@@ -413,8 +415,8 @@ EOF
         return 0
         ;;
       *)
-        echo "❌ Unknown option: $1"
-        echo "Use --help for usage information."
+        rec_ui_err "Unknown option: $1"
+        printf '   %s\n' "Use --help for usage information." >&2
         return 1
         ;;
     esac
@@ -422,7 +424,7 @@ EOF
   done
 
   if [ -z "$REPO_URL" ]; then
-    echo "❌ Repository URL is required. Use --url=<github-url>"
+    rec_ui_err "Repository URL is required. Use --url=<github-url>"
     return 1
   fi
 
@@ -430,68 +432,68 @@ EOF
   REPO_NAME="$(basename "$REPO_URL" .git)"
   [ -z "$README_TEXT" ] && README_TEXT="# ${REPO_NAME}"
 
-  echo "📦  Initializing repository..."
-  echo "➡️  URL: $REPO_URL"
-  echo "➡️  Branch: $BRANCH"
-  echo "➡️  Commit: $INITIAL_COMMIT"
+  rec_ui_step "Initializing repository..."
+  rec_ui_kv "URL" "$REPO_URL"
+  rec_ui_kv "Branch" "$BRANCH"
+  rec_ui_kv "Commit" "$INITIAL_COMMIT"
 
   if [ "$DRY_RUN" = "yes" ]; then
-    echo "(dry-run) Commands that would be executed:"
-    echo "  echo \"$README_TEXT\" >> README.md"
-    echo "  git init && git add -A && git commit -m \"$INITIAL_COMMIT\""
-    echo "  git branch -M $BRANCH && git remote add origin $REPO_URL"
-    echo "  git push -u origin $BRANCH"
+    rec_ui_info "(dry-run) Commands that would be executed:"
+    printf '   %s\n' "echo \"$README_TEXT\" >> README.md"
+    printf '   %s\n' "git init && git add -A && git commit -m \"$INITIAL_COMMIT\""
+    printf '   %s\n' "git branch -M $BRANCH && git remote add origin $REPO_URL"
+    printf '   %s\n' "git push -u origin $BRANCH"
     return 0
   fi
 
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "❌ Already a Git repository. Use 'git remote add origin <url>' instead."
+    rec_ui_err "Already a Git repository. Use 'git remote add origin <url>' instead."
     return 1
   fi
 
-  echo "🔧  git init"
+  rec_ui_step "git init"
   git init || {
-    echo "❌ git init failed"
+    rec_ui_err "git init failed"
     return 1
   }
 
   if [ ! -f "README.md" ]; then
-    echo "📝  Creating README.md..."
+    rec_ui_step "Creating README.md..."
     echo "$README_TEXT" >README.md || {
-      echo "❌ Failed to create README.md"
+      rec_ui_err "Failed to create README.md"
       return 1
     }
   fi
 
-  echo "➕  git add -A"
+  rec_ui_step "git add -A"
   git add -A || {
-    echo "❌ git add failed"
+    rec_ui_err "git add failed"
     return 1
   }
 
-  echo "📝  git commit -m \"$INITIAL_COMMIT\""
+  rec_ui_step "git commit -m \"$INITIAL_COMMIT\""
   git commit -m "$INITIAL_COMMIT" || {
-    echo "❌ git commit failed"
+    rec_ui_err "git commit failed"
     return 1
   }
 
-  echo "🌿  git branch -M $BRANCH"
+  rec_ui_step "git branch -M $BRANCH"
   git branch -M "$BRANCH" || {
-    echo "❌ git branch failed"
+    rec_ui_err "git branch failed"
     return 1
   }
 
-  echo "🔗  git remote add origin $REPO_URL"
+  rec_ui_step "git remote add origin $REPO_URL"
   git remote add origin "$REPO_URL" || {
-    echo "❌ git remote add failed"
+    rec_ui_err "git remote add failed"
     return 1
   }
 
-  echo "🚀  git push -u origin $BRANCH"
+  rec_ui_step "git push -u origin $BRANCH"
   if ! git push -u origin "$BRANCH"; then
-    echo "❌ git push failed. Check your credentials and repository access."
+    rec_ui_err "git push failed. Check your credentials and repository access."
     return 1
   fi
 
-  echo "✅  Repository initialized and pushed to $REPO_URL"
+  rec_ui_ok "Repository initialized and pushed to $REPO_URL"
 }

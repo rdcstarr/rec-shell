@@ -39,6 +39,8 @@ if [ -r "$REC_SHELL_DIR/lib/core.sh" ]; then
 else
   return 0 2>/dev/null || exit 0
 fi
+# UI toolkit before update.sh, so the "new version" banner can use it.
+[ -r "$REC_SHELL_DIR/lib/ui.sh" ] && . "$REC_SHELL_DIR/lib/ui.sh"
 [ -r "$REC_SHELL_DIR/lib/semver.sh" ] && . "$REC_SHELL_DIR/lib/semver.sh"
 [ -r "$REC_SHELL_DIR/lib/update.sh" ] && . "$REC_SHELL_DIR/lib/update.sh"
 

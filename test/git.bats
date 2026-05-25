@@ -25,10 +25,12 @@ teardown() {
 }
 
 # git_in SHELL DIR CODE
+# The real loader always sources lib/ui.sh before the lazy-loaded cli-git.sh,
+# so the UI helpers (rec_ui_*) are available; mirror that here.
 git_in() {
   local shell="$1" dir="$2"
   shift 2
-  run "$shell" -c "cd '$dir'; . '$REPO_ROOT/lib/cli-git.sh'; $*"
+  run "$shell" -c "cd '$dir'; REC_SHELL_DIR='$REPO_ROOT'; . '$REPO_ROOT/lib/ui.sh'; . '$REPO_ROOT/lib/cli-git.sh'; $*"
 }
 
 # --- sync: fast-forward ----------------------------------------------------

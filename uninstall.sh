@@ -13,6 +13,39 @@ PURGE=0
 [ "${1:-}" = "--purge" ] && PURGE=1
 MARKER="# rec-shell"
 
+# --- pretty output (kept in sync with lib/ui.sh) ---------------------------
+if [ -n "${NO_COLOR+x}" ] || [ -n "${REC_NO_COLOR:-}" ]; then
+  _ui_color=0
+elif [ -n "${CLICOLOR_FORCE:-}" ] && [ "${CLICOLOR_FORCE}" != 0 ]; then
+  _ui_color=1
+elif [ -t 1 ]; then
+  _ui_color=1
+else
+  _ui_color=0
+fi
+if [ "$_ui_color" = 1 ]; then
+  C_G="$(printf '\033[32m')" C_Y="$(printf '\033[33m')" C_C="$(printf '\033[36m')" C_0="$(printf '\033[0m')"
+else
+  C_G="" C_Y="" C_C="" C_0=""
+fi
+case "${REC_UI_ASCII:-}" in
+  1 | yes | true | on) _ui_utf=0 ;;
+  *)
+    case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+      *[Uu][Tt][Ff]8* | *[Uu][Tt][Ff]-8*) _ui_utf=1 ;;
+      *) _ui_utf=0 ;;
+    esac
+    ;;
+esac
+if [ "$_ui_utf" = 1 ]; then
+  G_OK='✓' G_INFO='ℹ' G_WARN='⚠'
+else
+  G_OK='[ok]' G_INFO='[i]' G_WARN='[!]'
+fi
+ok() { printf '%s%s%s %s\n' "$C_G" "$G_OK" "$C_0" "$*"; }
+info() { printf '%s%s%s %s\n' "$C_C" "$G_INFO" "$C_0" "$*"; }
+skip() { printf '%s%s%s %s\n' "$C_Y" "$G_WARN" "$C_0" "$*" >&2; }
+
 # Remove the marker line and the loader line that follows it (anchored on the
 # marker comment, so it works even if the path changed).
 strip_rc() {
@@ -20,13 +53,13 @@ strip_rc() {
   [ -f "$rc" ] || return 0
   grep -qF "$MARKER" "$rc" 2>/dev/null || return 0
   if [ ! -w "$rc" ]; then
-    printf 'skip (no write permission): %s\n' "$rc" >&2
+    skip "no write permission: $rc"
     return 0
   fi
   tmp="$rc.rec-uninstall.$$"
-  awk -v m="$MARKER" '$0 == m { skip = 2 } skip > 0 { skip--; next } { print }' "$rc" >"$tmp" \
+  awk -v m="$MARKER" '$0 == m { drop = 2 } drop > 0 { drop--; next } { print }' "$rc" >"$tmp" \
     && mv "$tmp" "$rc" \
-    && printf 'removed loader line from %s\n' "$rc"
+    && ok "removed loader line from $rc"
 }
 
 for rc in "$HOME/.zshrc" "$HOME/.bashrc" /etc/zshrc /etc/zsh/zshrc /etc/bash.bashrc /etc/bashrc; do
@@ -36,9 +69,9 @@ done
 for d in "$HOME/.rec-shell" /opt/rec-shell; do
   [ -d "$d" ] || continue
   if [ -w "$(dirname "$d")" ]; then
-    rm -rf "$d" && printf 'removed %s\n' "$d"
+    rm -rf "$d" && ok "removed $d"
   else
-    printf 'skip (no write permission): %s\n' "$d" >&2
+    skip "no write permission: $d"
   fi
 done
 
@@ -46,9 +79,9 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/rec-shell"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/rec-shell"
 if [ "$PURGE" -eq 1 ]; then
   rm -rf "$CONFIG_DIR" "$CACHE_DIR"
-  printf 'purged config and cache\n'
+  ok "purged config and cache"
 else
-  printf 'kept config at %s (use --purge to remove)\n' "$CONFIG_DIR"
+  info "kept config at $CONFIG_DIR (use --purge to remove)"
 fi
 
-printf 'rec-shell removed. Restart your shell to finish.\n'
+ok "rec-shell removed. Restart your shell to finish."

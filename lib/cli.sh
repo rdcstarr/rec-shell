@@ -19,7 +19,8 @@ __rec_dispatch() {
     uninstall) __rec_cmd_uninstall "$@" ;;
     help | --help | -h) __rec_cmd_help ;;
     *)
-      printf 'rec-shell: unknown command "%s"\n\n' "$_rc_cmd" >&2
+      rec_ui_err "unknown command \"$_rc_cmd\""
+      printf '\n' >&2
       __rec_cmd_help >&2
       return 2
       ;;
@@ -32,40 +33,43 @@ __rec_cmd_version() {
   if [ -d "$REC_SHELL_DIR/.git" ] && rec_have git; then
     _rcv_sha="$(git -C "$REC_SHELL_DIR" rev-parse --short HEAD 2>/dev/null)"
   fi
+  printf 'rec-shell '
+  __rec_ui_emit 1 "$REC_UI_S_CYAN" "$_rcv_ver"
   if [ -n "$_rcv_sha" ]; then
-    printf 'rec-shell %s (%s) — %s on %s\n' "$_rcv_ver" "$_rcv_sha" "$REC_SHELL_NAME" "$REC_OS"
+    printf ' (%s) — %s on %s\n' "$_rcv_sha" "$REC_SHELL_NAME" "$REC_OS"
   else
-    printf 'rec-shell %s — %s on %s\n' "$_rcv_ver" "$REC_SHELL_NAME" "$REC_OS"
+    printf ' — %s on %s\n' "$REC_SHELL_NAME" "$REC_OS"
   fi
 }
 
 __rec_cmd_check() {
   rec_have curl || {
-    printf 'rec-shell: curl is required for update checks\n' >&2
+    rec_ui_err 'curl is required for update checks'
     return 1
   }
   _rcc_installed="$(rec_installed_version 2>/dev/null || echo '?')"
   _rcc_latest="$(rec_update_fetch_latest)" || _rcc_latest=""
   if [ -z "$_rcc_latest" ]; then
-    printf 'rec-shell: could not reach the update server.\n' >&2
+    rec_ui_err 'could not reach the update server.'
     return 1
   fi
   command mkdir -p "$REC_CACHE_DIR" 2>/dev/null \
     && printf '%s\n%s\n' "$(date +%s)" "$_rcc_latest" >"$REC_CACHE_FILE" 2>/dev/null
   if rec_semver_gt "$_rcc_latest" "$_rcc_installed"; then
-    printf 'rec-shell %s is available (you have %s).\nRun: rec update\n' "$_rcc_latest" "$_rcc_installed"
+    rec_ui_warn_out "rec-shell $_rcc_latest is available (you have $_rcc_installed)."
+    rec_ui_step 'run: rec update'
   else
-    printf 'rec-shell is up to date (%s).\n' "$_rcc_installed"
+    rec_ui_ok "rec-shell is up to date ($_rcc_installed)."
   fi
 }
 
 __rec_cmd_update() {
   rec_have git || {
-    printf 'rec-shell: git is required to update\n' >&2
+    rec_ui_err 'git is required to update'
     return 1
   }
   [ -d "$REC_SHELL_DIR/.git" ] || {
-    printf 'rec-shell: %s is not a git checkout; reinstall with the installer.\n' "$REC_SHELL_DIR" >&2
+    rec_ui_err "$REC_SHELL_DIR is not a git checkout; reinstall with the installer."
     return 1
   }
 
@@ -73,9 +77,9 @@ __rec_cmd_update() {
   if [ ! -w "$REC_SHELL_DIR/.git" ]; then
     if rec_have sudo; then
       _rcu_sudo=yes
-      printf 'rec-shell: system install detected; using sudo...\n'
+      rec_ui_info 'system install detected; using sudo...'
     else
-      printf 'rec-shell: need write access to %s (run as root)\n' "$REC_SHELL_DIR" >&2
+      rec_ui_err "need write access to $REC_SHELL_DIR (run as root)"
       return 1
     fi
   fi
@@ -89,7 +93,7 @@ __rec_cmd_update() {
   }
 
   __rec_git fetch --tags --prune origin || {
-    printf 'rec-shell: fetch failed (offline?)\n' >&2
+    rec_ui_err 'fetch failed (offline?)'
     return 1
   }
 
@@ -97,12 +101,12 @@ __rec_cmd_update() {
   [ -n "$_rcu_tag" ] && _rcu_tag="$(__rec_git describe --tags "$_rcu_tag" 2>/dev/null)"
   if [ -n "$_rcu_tag" ]; then
     __rec_git checkout -q "$_rcu_tag" 2>/dev/null || __rec_git pull --ff-only || {
-      printf 'rec-shell: update failed\n' >&2
+      rec_ui_err 'update failed'
       return 1
     }
   else
     __rec_git pull --ff-only || {
-      printf 'rec-shell: update failed\n' >&2
+      rec_ui_err 'update failed'
       return 1
     }
   fi
@@ -110,7 +114,7 @@ __rec_cmd_update() {
   _rcu_new="$(rec_installed_version 2>/dev/null || echo '?')"
   command mkdir -p "$REC_CACHE_DIR" 2>/dev/null \
     && printf '%s\n%s\n' "$(date +%s)" "$_rcu_new" >"$REC_CACHE_FILE" 2>/dev/null
-  printf 'rec-shell updated to %s.\n' "$_rcu_new"
+  rec_ui_ok "rec-shell updated to $_rcu_new."
   # `rec` is a function in the live shell, so apply the update immediately.
   __rec_cmd_reload
 }
@@ -118,17 +122,18 @@ __rec_cmd_update() {
 __rec_cmd_reload() {
   unset REC_SHELL_LOADED
   . "$REC_SHELL_DIR/rec-shell.sh"
-  printf 'rec-shell reloaded (%s).\n' "$(rec_installed_version 2>/dev/null || echo '?')"
+  rec_ui_ok "rec-shell reloaded ($(rec_installed_version 2>/dev/null || echo '?'))."
 }
 
 __rec_cmd_doctor() {
-  printf 'rec-shell doctor\n'
-  printf '  version:  %s\n' "$(rec_installed_version 2>/dev/null || echo '?')"
-  printf '  shell:    %s\n' "$REC_SHELL_NAME"
-  printf '  os:       %s\n' "$REC_OS"
-  printf '  dir:      %s\n' "$REC_SHELL_DIR"
-  printf '  config:   %s\n' "$REC_CONFIG_FILE"
-  [ -n "${REC_DISABLED_MODULES:-}" ] && printf '  disabled: %s\n' "$REC_DISABLED_MODULES"
+  rec_ui_heading 'rec-shell doctor'
+  rec_ui_kv version "$(rec_installed_version 2>/dev/null || echo '?')"
+  rec_ui_kv shell "$REC_SHELL_NAME"
+  rec_ui_kv os "$REC_OS"
+  rec_ui_kv dir "$REC_SHELL_DIR"
+  rec_ui_kv config "$REC_CONFIG_FILE"
+  [ -n "${REC_DISABLED_MODULES:-}" ] && rec_ui_kv disabled "$REC_DISABLED_MODULES"
+  printf '\n'
 
   if rec_have git; then __rec_ok "git present"; else __rec_no "git missing (needed for updates)"; fi
   if rec_have curl; then __rec_ok "curl present"; else __rec_no "curl missing (needed for update checks)"; fi
@@ -150,8 +155,10 @@ __rec_cmd_doctor() {
   __rec_doctor_rc
 }
 
-__rec_ok() { printf '  [ok]   %s\n' "$1"; }
-__rec_no() { printf '  [warn] %s\n' "$1"; }
+# doctor status lines: ok on stdout, warnings on stdout too (diagnostics are
+# expected on stdout, e.g. `rec doctor | less`).
+__rec_ok() { rec_ui_ok "$1"; }
+__rec_no() { rec_ui_warn_out "$1"; }
 
 __rec_doctor_rc() {
   for _rcd_rc in "$HOME/.zshrc" "$HOME/.bashrc" /etc/zshrc /etc/zsh/zshrc /etc/bash.bashrc /etc/bashrc; do
@@ -165,11 +172,17 @@ __rec_doctor_rc() {
 }
 
 # enable/disable a module by editing REC_DISABLED_MODULES in the user config.
+# With no module name, open an interactive multiselect picker on a terminal;
+# otherwise keep the original single-module behavior.
 __rec_cmd_toggle() {
   _rct_action="$1"
   _rct_mod="${2:-}"
   if [ -z "$_rct_mod" ]; then
-    printf 'usage: rec-shell %s <module>\n' "$_rct_action" >&2
+    if rec_ui_interactive_load && __rec_ui_interactive; then
+      __rec_toggle_interactive "$_rct_action"
+      return $?
+    fi
+    rec_ui_err "usage: rec $_rct_action <module>"
     return 2
   fi
 
@@ -194,7 +207,75 @@ __rec_cmd_toggle() {
   _rct_new="$(printf '%s' "$_rct_new" | sed 's/^ *//; s/  */ /g; s/ *$//')"
 
   __rec_config_set REC_DISABLED_MODULES "$_rct_new"
-  printf 'rec-shell: %sd "%s". Run: rec reload\n' "$_rct_action" "$_rct_mod"
+  rec_ui_ok "${_rct_action}d \"$_rct_mod\". Run: rec reload"
+}
+
+# __rec_toggle_interactive ACTION -> pick modules to enable/disable via a
+# multiselect, then persist the new REC_DISABLED_MODULES. ACTION is enable|disable.
+__rec_toggle_interactive() {
+  _rti_action="$1"
+  command mkdir -p "$REC_CONFIG_DIR" 2>/dev/null
+  _rti_cur="$(
+    [ -r "$REC_CONFIG_FILE" ] && . "$REC_CONFIG_FILE" 2>/dev/null
+    printf '%s' "${REC_DISABLED_MODULES:-}"
+  )"
+  _rti_disabled=" $_rti_cur "
+
+  # Candidates: for `disable`, the enabled modules; for `enable`, the disabled.
+  _rti_candidates=""
+  for _rti_f in "$REC_SHELL_DIR"/modules/*.sh; do
+    [ -r "$_rti_f" ] || continue
+    _rti_k="${_rti_f##*/}"
+    _rti_k="${_rti_k%.sh}"
+    _rti_k="${_rti_k#[0-9][0-9]-}"
+    case "$_rti_disabled" in
+      *" $_rti_k "*) _rti_is=disabled ;;
+      *) _rti_is=enabled ;;
+    esac
+    if [ "$_rti_action" = disable ] && [ "$_rti_is" = enabled ]; then
+      _rti_candidates="$_rti_candidates $_rti_k"
+    elif [ "$_rti_action" = enable ] && [ "$_rti_is" = disabled ]; then
+      _rti_candidates="$_rti_candidates $_rti_k"
+    fi
+  done
+  _rti_candidates="${_rti_candidates# }"
+
+  if [ -z "$_rti_candidates" ]; then
+    if [ "$_rti_action" = disable ]; then
+      rec_ui_info 'All modules are already enabled.'
+    else
+      rec_ui_info 'No disabled modules to enable.'
+    fi
+    return 0
+  fi
+
+  # zsh keeps unquoted vars un-split; enable sh-style splitting just here.
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    setopt local_options sh_word_split 2>/dev/null
+  fi
+  # shellcheck disable=SC2086 # intentional word-split of the candidate list
+  rec_ui_multiselect "Modules to $_rti_action" $_rti_candidates >/dev/null
+  if [ -z "${REC_UI_REPLY:-}" ]; then
+    rec_ui_info 'Nothing selected.'
+    return 0
+  fi
+
+  _rti_new=" $_rti_cur "
+  # shellcheck disable=SC2086 # REC_UI_REPLY is a space-separated module list
+  for _rti_p in $REC_UI_REPLY; do
+    if [ "$_rti_action" = disable ]; then
+      case "$_rti_new" in
+        *" $_rti_p "*) ;;
+        *) _rti_new="$_rti_new$_rti_p " ;;
+      esac
+    else
+      _rti_new="$(printf '%s' "$_rti_new" | sed "s/ $_rti_p / /g")"
+    fi
+  done
+  _rti_new="$(printf '%s' "$_rti_new" | sed 's/^ *//; s/  */ /g; s/ *$//')"
+
+  __rec_config_set REC_DISABLED_MODULES "$_rti_new"
+  rec_ui_ok "${_rti_action}d: $REC_UI_REPLY. Run: rec reload"
 }
 
 # __rec_config_set KEY VALUE -> replace (or add) KEY="VALUE" in the config file.
@@ -217,7 +298,7 @@ __rec_cmd_git() {
     if [ -r "$REC_SHELL_DIR/lib/cli-git.sh" ]; then
       . "$REC_SHELL_DIR/lib/cli-git.sh"
     else
-      printf 'rec: git commands unavailable (missing lib/cli-git.sh)\n' >&2
+      rec_ui_err 'git commands unavailable (missing lib/cli-git.sh)'
       return 1
     fi
   fi
@@ -228,7 +309,7 @@ __rec_cmd_uninstall() {
   if [ -r "$REC_SHELL_DIR/uninstall.sh" ]; then
     sh "$REC_SHELL_DIR/uninstall.sh" "$@"
   else
-    printf 'rec-shell: uninstaller not found at %s\n' "$REC_SHELL_DIR/uninstall.sh" >&2
+    rec_ui_err "uninstaller not found at $REC_SHELL_DIR/uninstall.sh"
     return 1
   fi
 }
