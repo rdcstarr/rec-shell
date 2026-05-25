@@ -100,15 +100,20 @@ __rec_cmd_update() {
     fi
   }
 
+  _rcu_old="$(rec_installed_version 2>/dev/null || echo '?')"
+
   __rec_git fetch --tags --prune origin || {
     rec_ui_err 'fetch failed (offline?)'
     return 1
   }
 
-  _rcu_tag="$(__rec_git rev-list --tags --max-count=1 2>/dev/null)"
-  [ -n "$_rcu_tag" ] && _rcu_tag="$(__rec_git describe --tags "$_rcu_tag" 2>/dev/null)"
+  # Pick the highest SEMVER tag (robust and deterministic; matches
+  # scripts/release.sh and `rec git release`). The older "newest tag by commit
+  # date" heuristic could pick the wrong tag when commit times were close.
+  # Fall back to a fast-forward pull when there are no version tags.
+  _rcu_tag="$(__rec_git tag --list 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null | sort -V | tail -n1)"
   if [ -n "$_rcu_tag" ]; then
-    __rec_git checkout -q "$_rcu_tag" 2>/dev/null || __rec_git pull --ff-only || {
+    __rec_git checkout -q "$_rcu_tag" 2>/dev/null || __rec_git pull --ff-only 2>/dev/null || {
       rec_ui_err 'update failed'
       return 1
     }
@@ -122,7 +127,12 @@ __rec_cmd_update() {
   _rcu_new="$(rec_installed_version 2>/dev/null || echo '?')"
   command mkdir -p "$REC_CACHE_DIR" 2>/dev/null \
     && printf '%s\n%s\n' "$(date +%s)" "$_rcu_new" >"$REC_CACHE_FILE" 2>/dev/null
-  rec_ui_ok "rec-shell updated to $_rcu_new."
+
+  if [ "$_rcu_new" = "$_rcu_old" ]; then
+    rec_ui_ok "rec-shell is already up to date ($_rcu_new)."
+    return 0
+  fi
+  rec_ui_ok "rec-shell updated: $_rcu_old $REC_UI_G_ARROW $_rcu_new."
   # `rec` is a function in the live shell, so apply the update immediately.
   __rec_cmd_reload
 }
