@@ -152,87 +152,113 @@ __rec_tips_dispatch() {
 # do X" recipes. Kept short so `rec cheat` (the unfiltered call) still fits
 # in a screen.
 
+# Each entry is "<command-or-shortcut>~~<description>". The ~~ separator is
+# parsed by __rec_cheat_section to render the two columns with distinct styles
+# (cyan command, dim description); a "~~"-less entry renders as command-only.
 __rec_cheat_section() {
-  rec_ui_heading "$1"
+  _rcs_title="$1"
   shift
-  local line
-  for line in "$@"; do printf '  %s\n' "$line"; done
+  # Header: cyan bullet + bold tool name.
+  __rec_ui_emit 1 "$REC_UI_S_CYAN" "$REC_UI_G_GT"
+  printf ' '
+  __rec_ui_emit 1 "$REC_UI_S_BOLD" "$_rcs_title"
   printf '\n'
+  for _rcs_line in "$@"; do
+    case "$_rcs_line" in
+      *'~~'*)
+        _rcs_cmd="${_rcs_line%%~~*}"
+        _rcs_desc="${_rcs_line#*~~}"
+        ;;
+      *)
+        _rcs_cmd="$_rcs_line"
+        _rcs_desc=""
+        ;;
+    esac
+    printf '    '
+    __rec_ui_emit 1 "$REC_UI_S_CYAN" "$(printf '%-30s' "$_rcs_cmd")"
+    if [ -n "$_rcs_desc" ]; then
+      printf '  '
+      __rec_ui_emit 1 "$REC_UI_S_DIM" "$_rcs_desc"
+    fi
+    printf '\n'
+  done
+  printf '\n'
+  unset _rcs_title _rcs_line _rcs_cmd _rcs_desc
 }
 
 __rec_cheat_rg() {
   __rec_cheat_section "ripgrep (rg)" \
-    "rg 'pattern'              recursive case-smart search" \
-    "rg -i 'pattern'           force case-insensitive" \
-    "rg -t py 'pattern'        only Python files (see: rg --type-list)" \
-    "rg -l 'pattern'           list matching files" \
-    "rg -A 2 -B 2 'pattern'    2 lines of context above + below" \
-    "rg --hidden --no-ignore   search hidden + gitignored files"
+    "rg 'pattern'~~recursive case-smart search" \
+    "rg -i 'pattern'~~force case-insensitive" \
+    "rg -t py 'pattern'~~only Python files (see: rg --type-list)" \
+    "rg -l 'pattern'~~list matching files" \
+    "rg -A 2 -B 2 'pattern'~~2 lines of context above + below" \
+    "rg --hidden --no-ignore~~search hidden + gitignored files"
 }
 
 __rec_cheat_fd() {
   __rec_cheat_section "fd" \
-    "fd PATTERN                find files matching pattern" \
-    "fd -e py                  only .py files" \
-    "fd -H -E .git             include hidden, exclude .git" \
-    "fd -t d 'name'            directories only" \
-    "fd 'foo' -x rm            run 'rm' on each match" \
-    "fd 'foo' -X mv -t dest/   batch-pipe matches to one mv call"
+    "fd PATTERN~~find files matching pattern" \
+    "fd -e py~~only .py files" \
+    "fd -H -E .git~~include hidden, exclude .git" \
+    "fd -t d 'name'~~directories only" \
+    "fd 'foo' -x rm~~run 'rm' on each match" \
+    "fd 'foo' -X mv -t dest/~~batch-pipe matches to one mv call"
 }
 
 __rec_cheat_eza() {
   __rec_cheat_section "eza" \
-    "eza                       basic listing" \
-    "eza -l --git              long format + git status" \
-    "eza --tree --level=2      two-level tree" \
-    "eza -l --sort=size        largest files first" \
-    "eza -la --total-size      recursive size per dir" \
-    "eza -l --no-permissions   compact long format"
+    "eza~~basic listing" \
+    "eza -l --git~~long format + git status" \
+    "eza --tree --level=2~~two-level tree" \
+    "eza -l --sort=size~~largest files first" \
+    "eza -la --total-size~~recursive size per dir" \
+    "eza -l --no-permissions~~compact long format"
 }
 
 __rec_cheat_bat() {
   __rec_cheat_section "bat" \
-    "bat file                  paged + highlighted" \
-    "bat -p file               plain output (no decorations)" \
-    "bat -l json file          force a specific syntax" \
-    "bat --diff a.txt b.txt    colorful diff" \
-    "tail -f log | bat -p -l log    live colorized tail"
+    "bat file~~paged + highlighted" \
+    "bat -p file~~plain output (no decorations)" \
+    "bat -l json file~~force a specific syntax" \
+    "bat --diff a.txt b.txt~~colorful diff" \
+    "tail -f log | bat -p -l log~~live colorized tail"
 }
 
 __rec_cheat_fzf() {
   __rec_cheat_section "fzf" \
-    "Ctrl+T                    pick files into the current command" \
-    "Alt+C                     cd into a subdirectory via fzf" \
-    "Ctrl+R                    history search (overridden by atuin if installed)" \
-    "git branch | fzf          interactive single-line picker" \
-    "fzf --multi               select multiple entries with TAB"
+    "Ctrl+T~~pick files into the current command" \
+    "Alt+C~~cd into a subdirectory via fzf" \
+    "Ctrl+R~~history search (overridden by atuin if installed)" \
+    "git branch | fzf~~interactive single-line picker" \
+    "fzf --multi~~select multiple entries with TAB"
 }
 
 __rec_cheat_atuin() {
   __rec_cheat_section "atuin" \
-    "Ctrl+R                    fuzzy through ALL history (with metadata)" \
-    "atuin search 'pattern'    non-interactive search" \
-    "atuin search --cwd .      history from this directory only" \
-    "atuin stats               top commands and frequency" \
-    "atuin sync                push/pull to/from your atuin server"
+    "Ctrl+R~~fuzzy through ALL history (with metadata)" \
+    "atuin search 'pattern'~~non-interactive search" \
+    "atuin search --cwd .~~history from this directory only" \
+    "atuin stats~~top commands and frequency" \
+    "atuin sync~~push/pull to/from your atuin server"
 }
 
 __rec_cheat_btop() {
   __rec_cheat_section "btop" \
-    "btop                      open the interactive monitor" \
-    "F2                        settings panel" \
-    "F4                        filter processes by name" \
-    "+/- on a process          adjust niceness" \
-    "p                         pause updates"
+    "btop~~open the interactive monitor" \
+    "F2~~settings panel" \
+    "F4~~filter processes by name" \
+    "+/- on a process~~adjust niceness" \
+    "p~~pause updates"
 }
 
 __rec_cheat_ncdu() {
   __rec_cheat_section "ncdu" \
-    "ncdu .                    interactive du in the current dir" \
-    "ncdu -x /                 stay on one filesystem (don't cross mounts)" \
-    "ncdu --exclude .git       skip a path" \
-    "d                         delete the highlighted entry (with confirm)" \
-    "?                         show all key bindings"
+    "ncdu .~~interactive du in the current dir" \
+    "ncdu -x /~~stay on one filesystem (don't cross mounts)" \
+    "ncdu --exclude .git~~skip a path" \
+    "d~~delete the highlighted entry (with confirm)" \
+    "?~~show all key bindings"
 }
 
 __rec_cheat_help() {
