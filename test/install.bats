@@ -31,6 +31,7 @@ install_in() {
     mkdir -p '$T/repo/lib' '$T/repo'
     cp '$REPO_ROOT/lib/core.sh' '$T/repo/lib/'
     cp '$REPO_ROOT/lib/ui.sh' '$T/repo/lib/'
+    cp '$REPO_ROOT/lib/ui-interactive.sh' '$T/repo/lib/'
     cp '$REPO_ROOT/lib/tools-catalog.sh' '$T/repo/lib/'
     cp '$REPO_ROOT/lib/cli-install.sh' '$T/repo/lib/'
     # Stub install.sh so we observe how rec install invokes it.
@@ -67,21 +68,29 @@ EOF
 @test "rec install <name> calls install.sh with --tools-only and --tools=NAME" {
   install_in bash '__rec_install_run fd'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"INSTALL_CALL:"* ]]
-  [[ "$output" == *"--tools-only"* ]]
-  [[ "$output" == *"--tools=fd"* ]]
-  [[ "$output" == *"--unattended"* ]]
+  # Per-tool log captures the stub install.sh invocation.
+  log="$T/.cache/rec-shell/install-logs/fd.log"
+  [ -r "$log" ]
+  grep -q 'INSTALL_CALL:'  "$log"
+  grep -q -- '--tools-only' "$log"
+  grep -q -- '--tools=fd'   "$log"
+  grep -q -- '--unattended' "$log"
 }
 
 @test "rec install all installs every missing tool" {
-  # Only eza is present, so rec install all should ask install.sh for the rest.
+  # Only eza is present; rec install all should call install.sh once per
+  # missing tool — never for eza.
   printf "#!/bin/sh\nexit 0\n" >"$T/bin/eza"
   chmod +x "$T/bin/eza"
   install_in bash '__rec_install_dispatch all'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"INSTALL_CALL:"* ]]
-  [[ "$output" == *"--tools=fd"* || "$output" == *",fd"* || "$output" == *"fd,"* ]]
-  [[ "$output" != *"--tools=eza"* ]]
+  [ -r "$T/.cache/rec-shell/install-logs/fd.log" ]
+  [ -r "$T/.cache/rec-shell/install-logs/btop.log" ]
+  [ -r "$T/.cache/rec-shell/install-logs/ncdu.log" ]
+  # eza was already present, so no log was created for it.
+  [ ! -e "$T/.cache/rec-shell/install-logs/eza.log" ]
+  # Final summary line appears in output.
+  [[ "$output" == *"installed"* ]]
 }
 
 @test "rec install run with no missing tools exits 0 with a friendly message" {
@@ -161,7 +170,50 @@ EOF
     . '$T/repo/lib/cli-install.sh'
     __rec_install_run fd"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"RAN_VIA: bash"* ]]
-  [[ "$output" != *"not-bash"* ]]
+  # Stub output went to the per-tool log; assert there.
+  log="$T/.cache/rec-shell/install-logs/fd.log"
+  [ -r "$log" ]
+  grep -q 'RAN_VIA: bash' "$log"
+  ! grep -q 'not-bash' "$log"
+  rm -rf "$T"
+}
+
+# Per-tool log file is created at $REC_CACHE_DIR/install-logs/<tool>.log so
+# users can inspect exactly what apt / curl said when something fails.
+@test "rec install <name> writes a per-tool log under REC_CACHE_DIR" {
+  install_in bash '__rec_install_run ripgrep'
+  [ "$status" -eq 0 ]
+  log="$T/.cache/rec-shell/install-logs/ripgrep.log"
+  [ -r "$log" ]
+  # Stub install.sh echoes INSTALL_CALL — confirm the log captured it.
+  grep -q 'INSTALL_CALL:' "$log"
+}
+
+# Failure case: when install.sh exits non-zero, rec install must point the
+# user at the log file so they can diagnose.
+@test "rec install reports a failure with the log path when install.sh fails" {
+  T="$(mktemp -d)"
+  mkdir -p "$T/bin" "$T/repo/lib" "$T/repo"
+  cp lib/core.sh lib/ui.sh lib/tools-catalog.sh lib/cli-install.sh "$T/repo/lib/"
+  cat >"$T/repo/install.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "FAKE_APT_ERROR: unable to locate package" >&2
+exit 100
+EOF
+  chmod +x "$T/repo/install.sh"
+  run bash -c "
+    export HOME='$T' PATH='$T/bin:/usr/bin:/bin' REC_SHELL_DIR='$T/repo'
+    REC_SHELL_NAME=bash REC_UI_PLAIN=1
+    . '$T/repo/lib/core.sh'
+    . '$T/repo/lib/ui.sh'
+    . '$T/repo/lib/tools-catalog.sh'
+    . '$T/repo/lib/cli-install.sh'
+    __rec_install_run fd"
+  # Summary surfaces failure and points to log dir.
+  [[ "$output" == *"failed"* ]]
+  [[ "$output" == *"install-logs"* ]]
+  log="$T/.cache/rec-shell/install-logs/fd.log"
+  [ -r "$log" ]
+  grep -q 'FAKE_APT_ERROR' "$log"
   rm -rf "$T"
 }

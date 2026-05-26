@@ -464,16 +464,26 @@ ensure_tool() {
   fi
   log "Installing $name..."
   # Try each candidate package name in turn; pm_install picks the matching PM.
-  local pkg ok=0
+  # Capture stderr to a tmp file so we can surface the actual apt/brew error
+  # on final failure (e.g. "E: Unable to locate package eza" on Debian
+  # without backports) instead of the previous silent ⚠.
+  local pkg ok=0 errfile
+  errfile="$(mktemp 2>/dev/null || mktemp -t pm_install.XXXXXX)"
   for pkg in "$@"; do
-    pm_install "$pkg" 2>/dev/null && {
+    : >"$errfile"
+    if pm_install "$pkg" 2>"$errfile"; then
       ok=1
       break
-    }
+    fi
   done
   if [ "$ok" -ne 1 ]; then
     warn "$name install failed; install it manually."
+    if [ -s "$errfile" ]; then
+      warn "Last error from the package manager:"
+      sed 's/^/  /' "$errfile" >&2
+    fi
   fi
+  rm -f "$errfile"
 }
 
 # fzf has a non-standard installer (clone + run install) that is also the

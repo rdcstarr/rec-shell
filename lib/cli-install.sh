@@ -140,10 +140,13 @@ __rec_install_interactive() {
   unset _rin_miss _rin_OLDIFS _rin_csv
 }
 
-# Common exec path: invoke install.sh --tools-only with the given CSV list.
-# install.sh requires bash (it uses `set -o pipefail`, `local`, `[[ ]]`),
-# so we must NOT call it via `sh` — on Debian-family systems /bin/sh is
-# dash and would refuse `pipefail` with "Illegal option -o pipefail".
+# Common exec path: split the CSV tool list and install each tool individually
+# under a spinner, redirecting the (typically verbose) apt/curl output to a
+# per-tool log file at $REC_CACHE_DIR/install-logs/<tool>.log. atuin is the
+# one exception — its upstream installer asks the user a few questions, so
+# we let its output through directly. install.sh itself REQUIRES bash (it
+# uses `set -o pipefail`, `local`, `[[ ]]`), so we never call it via `sh` —
+# on Debian-family systems /bin/sh is dash and would refuse `pipefail`.
 __rec_install_exec() {
   _rin_csv="$1"
   if [ ! -r "$REC_SHELL_DIR/install.sh" ]; then
@@ -156,6 +159,71 @@ __rec_install_exec() {
     unset _rin_csv
     return 1
   fi
-  bash "$REC_SHELL_DIR/install.sh" --tools-only --unattended --tools="$_rin_csv"
-  unset _rin_csv
+  # rec_ui_spin lives in lib/ui-interactive.sh — make sure it's loaded.
+  rec_ui_interactive_load 2>/dev/null
+  _rin_logdir="${REC_CACHE_DIR:-$HOME/.cache/rec-shell}/install-logs"
+  mkdir -p "$_rin_logdir" 2>/dev/null
+  _rin_ok=0
+  _rin_fail=0
+  _rin_failed=""
+  _rin_OLDIFS="$IFS"
+  IFS=','
+  # shellcheck disable=SC2086 # intentional word-split on comma
+  for _rin_tool in $_rin_csv; do
+    [ -z "$_rin_tool" ] && continue
+    _rin_kind="$(rec_tools_field "$_rin_tool" 3)"
+    _rin_log="$_rin_logdir/$_rin_tool.log"
+    case "$_rin_kind" in
+      special-atuin)
+        # atuin's upstream installer has interactive prompts (sync sign-up,
+        # AI opt-in, daemon opt-in). Let output through so the user sees and
+        # answers them; tee a copy into the log for post-mortem.
+        rec_ui_info "Installing $_rin_tool — interactive, may ask a few questions..."
+        if bash "$REC_SHELL_DIR/install.sh" --tools-only --unattended \
+          --tools="$_rin_tool" 2>&1 | tee "$_rin_log"; then
+          _rin_ok=$((_rin_ok + 1))
+        else
+          _rin_fail=$((_rin_fail + 1))
+          _rin_failed="$_rin_failed $_rin_tool"
+        fi
+        ;;
+      *)
+        # Everything else: spinner + log when available, otherwise a
+        # one-line step + log. rec_ui_spin already reports ✓/✗; the
+        # fallback path emits its own ok/err.
+        if command -v rec_ui_spin >/dev/null 2>&1; then
+          if rec_ui_spin "installing $_rin_tool" \
+            sh -c "bash '$REC_SHELL_DIR/install.sh' --tools-only --unattended --tools='$_rin_tool' >'$_rin_log' 2>&1"; then
+            _rin_ok=$((_rin_ok + 1))
+          else
+            rec_ui_note "log: $_rin_log"
+            _rin_fail=$((_rin_fail + 1))
+            _rin_failed="$_rin_failed $_rin_tool"
+          fi
+        else
+          rec_ui_step "installing $_rin_tool"
+          if bash "$REC_SHELL_DIR/install.sh" --tools-only --unattended \
+            --tools="$_rin_tool" >"$_rin_log" 2>&1; then
+            rec_ui_ok "$_rin_tool installed"
+            _rin_ok=$((_rin_ok + 1))
+          else
+            rec_ui_err "$_rin_tool failed"
+            rec_ui_note "log: $_rin_log"
+            _rin_fail=$((_rin_fail + 1))
+            _rin_failed="$_rin_failed $_rin_tool"
+          fi
+        fi
+        ;;
+    esac
+  done
+  IFS="$_rin_OLDIFS"
+  printf '\n'
+  if [ "$_rin_fail" -eq 0 ]; then
+    rec_ui_ok "All $_rin_ok tool(s) installed."
+  else
+    rec_ui_warn "Installed $_rin_ok, failed $_rin_fail —$_rin_failed"
+    rec_ui_note "Failure logs in $_rin_logdir/"
+  fi
+  unset _rin_csv _rin_logdir _rin_ok _rin_fail _rin_failed _rin_OLDIFS \
+    _rin_tool _rin_kind _rin_log
 }
