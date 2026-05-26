@@ -76,3 +76,11 @@ cat_in() {
   [ "$status" -eq 0 ]
   [[ "$output" =~ ^[0-9]+$ ]]
 }
+
+@test "doctor exposes every tool catalogued (smoke)" {
+  cat_in bash '
+    . "$REC_SHELL_DIR/lib/cli.sh"
+    __rec_doctor_tools 2>&1'
+  # whois and dig are new; both should appear.
+  [[ "$output" == *"whois"* && "$output" == *"dig"* ]]
+}

@@ -189,35 +189,34 @@ __rec_cmd_doctor() {
 # bash users that two zsh-only plugins are skipped.
 __rec_doctor_tools() {
   rec_ui_heading "tools"
-  for _rdt_t in fzf:fzf atuin:atuin eza:eza bat:bat fd:fd ripgrep:rg btop:btop ncdu:ncdu whois:whois dig:dig; do
-    _rdt_bin="${_rdt_t#*:}"
-    _rdt_name="${_rdt_t%:*}"
-    if rec_have "$_rdt_bin"; then
-      __rec_ok "$_rdt_name present"
-    elif [ "$_rdt_name" = bat ] && rec_have batcat; then
-      __rec_ok "bat present (as batcat)"
-    elif [ "$_rdt_name" = fd ] && rec_have fdfind; then
-      __rec_ok "fd present (as fdfind)"
-    else
-      __rec_no "$_rdt_name missing"
-    fi
-  done
-  # zsh plugins
+  if command -v rec_tools_catalog >/dev/null 2>&1; then
+    rec_tools_catalog | while IFS='|' read -r _rdt_name _rdt_bin _rdt_kind _rdt_pkgs _rdt_desc; do
+      [ -z "$_rdt_name" ] && continue
+      case "$_rdt_kind" in
+        zsh-plugin) continue ;;
+      esac
+      if rec_tools_present "$_rdt_name"; then
+        __rec_ok "$_rdt_name present"
+      else
+        __rec_no "$_rdt_name missing"
+      fi
+    done
+  fi
+  # zsh plugins (kept separate so they only show on zsh and use a different
+  # presence check — the catalog's rec_tools_present already does the right
+  # thing on both shells, but we surface them in their own block for clarity).
   if [ "$REC_SHELL_NAME" = zsh ]; then
-    if [ -r "$REC_SHELL_DIR/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ]; then
-      __rec_ok "zsh-autosuggestions present"
-    else
-      __rec_no "zsh-autosuggestions missing"
-    fi
-    if [ -r "$REC_SHELL_DIR/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]; then
-      __rec_ok "zsh-syntax-highlighting present"
-    else
-      __rec_no "zsh-syntax-highlighting missing"
-    fi
+    for _rdt_p in zsh-autosuggestions zsh-syntax-highlighting; do
+      if rec_tools_present "$_rdt_p"; then
+        __rec_ok "$_rdt_p present"
+      else
+        __rec_no "$_rdt_p missing"
+      fi
+    done
   else
     rec_ui_note "zsh-autosuggestions and zsh-syntax-highlighting are zsh-only"
   fi
-  unset _rdt_t _rdt_bin _rdt_name
+  unset _rdt_name _rdt_bin _rdt_kind _rdt_pkgs _rdt_desc _rdt_p
 }
 
 # doctor status lines: ok on stdout, warnings on stdout too (diagnostics are
