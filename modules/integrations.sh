@@ -59,6 +59,25 @@ if [ "$REC_SHELL_NAME" = bash ] && [ -x /usr/lib/command-not-found ]; then
 fi
 
 # --- modern CLI tools ------------------------------------------------------
+#
+# A few of the upstream installers (atuin's setup script, fzf's local clone
+# install) drop binaries under $HOME/.atuin/bin or $HOME/.fzf/bin which are
+# NOT on PATH by default. Prepend them when they exist so the rec_have
+# checks below (and `rec doctor`, `rec install list`, …) actually see the
+# tool after it's installed via `rec install` — without forcing the user
+# to restart their shell.
+_rec_prepend_path() {
+  [ -d "$1" ] || return 0
+  case ":$PATH:" in
+    *":$1:"*) ;;
+    *) PATH="$1:$PATH" ;;
+  esac
+}
+_rec_prepend_path "$HOME/.atuin/bin"
+_rec_prepend_path "$HOME/.fzf/bin"
+export PATH
+unset -f _rec_prepend_path
+
 # fzf shell hooks (Ctrl+T files, Alt+C directories). Sourced BEFORE atuin so
 # atuin's Ctrl+R binding wins at the end.
 if rec_have fzf; then

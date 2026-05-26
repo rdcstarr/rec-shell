@@ -162,7 +162,10 @@ __rec_install_exec() {
   # rec_ui_spin lives in lib/ui-interactive.sh — make sure it's loaded.
   rec_ui_interactive_load 2>/dev/null
   _rin_logdir="${REC_CACHE_DIR:-$HOME/.cache/rec-shell}/install-logs"
-  mkdir -p "$_rin_logdir" 2>/dev/null
+  # `command mkdir` skips the user's `mkdir='mkdir -pv'` alias from
+  # modules/aliases.sh — otherwise the create message leaks to the terminal
+  # and breaks the clean spinner layout we want.
+  command mkdir -p "$_rin_logdir" 2>/dev/null
   _rin_ok=0
   _rin_fail=0
   _rin_failed=""
@@ -217,6 +220,18 @@ __rec_install_exec() {
     esac
   done
   IFS="$_rin_OLDIFS"
+  # Bring freshly-installed binaries into the live shell's PATH so the next
+  # `rec doctor` / `rec install list` immediately reflects them. atuin's
+  # upstream installer drops binaries in ~/.atuin/bin and fzf's user-mode
+  # clone install drops them in ~/.fzf/bin — neither is on PATH by default.
+  for _rin_extra in "$HOME/.atuin/bin" "$HOME/.fzf/bin"; do
+    [ -d "$_rin_extra" ] || continue
+    case ":$PATH:" in
+      *":$_rin_extra:"*) continue ;;
+    esac
+    PATH="$_rin_extra:$PATH"
+  done
+  export PATH
   printf '\n'
   if [ "$_rin_fail" -eq 0 ]; then
     rec_ui_ok "All $_rin_ok tool(s) installed."
@@ -225,5 +240,5 @@ __rec_install_exec() {
     rec_ui_note "Failure logs in $_rin_logdir/"
   fi
   unset _rin_csv _rin_logdir _rin_ok _rin_fail _rin_failed _rin_OLDIFS \
-    _rin_tool _rin_kind _rin_log
+    _rin_tool _rin_kind _rin_log _rin_extra
 }

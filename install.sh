@@ -482,8 +482,11 @@ ensure_tool() {
       warn "Last error from the package manager:"
       sed 's/^/  /' "$errfile" >&2
     fi
+    rm -f "$errfile"
+    return 1
   fi
   rm -f "$errfile"
+  return 0
 }
 
 # fzf has a non-standard installer (clone + run install) that is also the
