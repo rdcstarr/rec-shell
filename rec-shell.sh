@@ -41,6 +41,7 @@ else
 fi
 # UI toolkit before update.sh, so the "new version" banner can use it.
 [ -r "$REC_SHELL_DIR/lib/ui.sh" ] && . "$REC_SHELL_DIR/lib/ui.sh"
+[ -r "$REC_SHELL_DIR/lib/tools-catalog.sh" ] && . "$REC_SHELL_DIR/lib/tools-catalog.sh"
 [ -r "$REC_SHELL_DIR/lib/semver.sh" ] && . "$REC_SHELL_DIR/lib/semver.sh"
 [ -r "$REC_SHELL_DIR/lib/update.sh" ] && . "$REC_SHELL_DIR/lib/update.sh"
 
