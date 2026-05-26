@@ -141,6 +141,9 @@ __rec_install_interactive() {
 }
 
 # Common exec path: invoke install.sh --tools-only with the given CSV list.
+# install.sh requires bash (it uses `set -o pipefail`, `local`, `[[ ]]`),
+# so we must NOT call it via `sh` — on Debian-family systems /bin/sh is
+# dash and would refuse `pipefail` with "Illegal option -o pipefail".
 __rec_install_exec() {
   _rin_csv="$1"
   if [ ! -r "$REC_SHELL_DIR/install.sh" ]; then
@@ -148,6 +151,11 @@ __rec_install_exec() {
     unset _rin_csv
     return 1
   fi
-  sh "$REC_SHELL_DIR/install.sh" --tools-only --unattended --tools="$_rin_csv"
+  if ! rec_have bash; then
+    rec_ui_err "bash is required to run install.sh (and rec-shell itself)"
+    unset _rin_csv
+    return 1
+  fi
+  bash "$REC_SHELL_DIR/install.sh" --tools-only --unattended --tools="$_rin_csv"
   unset _rin_csv
 }

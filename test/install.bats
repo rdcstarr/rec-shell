@@ -135,3 +135,33 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"GOT_TOOLS:6"* ]]
 }
+
+# Regression: install.sh is bash (uses `set -o pipefail`, `local`, `[[ ]]`),
+# so __rec_install_exec must invoke it with bash, NOT /bin/sh. On Debian
+# systems /bin/sh is dash and would error out with
+# "Illegal option -o pipefail" at install.sh line 12 (`set -euo pipefail`).
+@test "rec install <name> invokes install.sh via bash (not /bin/sh)" {
+  # Replace the install.sh stub so it reports the interpreter that ran it
+  # via a bash-only env var (BASH_VERSION is set only under bash).
+  T="$(mktemp -d)"
+  mkdir -p "$T/bin" "$T/repo/lib" "$T/repo"
+  cp lib/core.sh lib/ui.sh lib/tools-catalog.sh lib/cli-install.sh "$T/repo/lib/"
+  cat >"$T/repo/install.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "RAN_VIA: ${BASH_VERSION:+bash} ${BASH_VERSION:-not-bash}"
+EOF
+  chmod +x "$T/repo/install.sh"
+  run bash -c "
+    export HOME='$T' PATH='$T/bin:/usr/bin:/bin' REC_SHELL_DIR='$T/repo'
+    REC_SHELL_NAME=bash REC_UI_PLAIN=1
+    . '$T/repo/lib/core.sh'
+    . '$T/repo/lib/ui.sh'
+    . '$T/repo/lib/tools-catalog.sh'
+    . '$T/repo/lib/cli-install.sh'
+    __rec_install_run fd"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"RAN_VIA: bash"* ]]
+  [[ "$output" != *"not-bash"* ]]
+  rm -rf "$T"
+}
