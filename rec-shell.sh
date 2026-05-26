@@ -41,6 +41,12 @@ else
 fi
 # UI toolkit before update.sh, so the "new version" banner can use it.
 [ -r "$REC_SHELL_DIR/lib/ui.sh" ] && . "$REC_SHELL_DIR/lib/ui.sh"
+# Interactive widgets (spinner, multiselect, confirm, …) used to be lazy-loaded
+# on first call, which meant updates that fixed widget bugs (e.g. v1.6.1's
+# monitor-mode silencing in rec_ui_spin) wouldn't take effect until the user
+# manually reloaded. Eager-source here so every reload re-defines them too.
+# This file only defines functions — there's no startup cost beyond the parse.
+[ -r "$REC_SHELL_DIR/lib/ui-interactive.sh" ] && . "$REC_SHELL_DIR/lib/ui-interactive.sh"
 [ -r "$REC_SHELL_DIR/lib/tools-catalog.sh" ] && . "$REC_SHELL_DIR/lib/tools-catalog.sh"
 [ -r "$REC_SHELL_DIR/lib/semver.sh" ] && . "$REC_SHELL_DIR/lib/semver.sh"
 [ -r "$REC_SHELL_DIR/lib/update.sh" ] && . "$REC_SHELL_DIR/lib/update.sh"
