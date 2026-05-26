@@ -121,6 +121,118 @@ __rec_whois_field_all() {
     | awk 'NF && !seen[tolower($0)]++'
 }
 
+# Continuation line under a rec_ui_kv row: aligns the value under the previous
+# value (key column is "%-10s " in rec_ui_kv, so 11 chars of leading padding).
+# Used when a single field has multiple values (status, name servers, PTR…),
+# which would otherwise render a bare ":" as the continuation key.
+__rec_whois_kv_cont() {
+  printf '%11s%s\n' '' "$1"
+}
+
+# __rec_whois_date_epoch DATESTR -> seconds since the epoch, or non-zero exit.
+# Handles both GNU date (Linux) and BSD date (mac); tries the common ISO/RFC
+# layouts in turn. Returns silently on failure so the caller can skip the
+# humanization without aborting the row.
+__rec_whois_date_epoch() {
+  _rwde_in="$1"
+  [ -z "$_rwde_in" ] && return 1
+  # 1) GNU date — accepts a wide variety of free-form strings.
+  _rwde_out="$(date -d "$_rwde_in" +%s 2>/dev/null)"
+  case "$_rwde_out" in
+    '' | *[!0-9-]*) _rwde_out="" ;;
+  esac
+  if [ -n "$_rwde_out" ]; then
+    printf '%s' "$_rwde_out"
+    return 0
+  fi
+  # 2) BSD date — strict; normalize the input and try a few known formats.
+  _rwde_clean="$(printf '%s' "$_rwde_in" \
+    | sed -E 's/\.[0-9]+(Z|[+-].*)?$//; s/Z$//; s/[+-][0-9]{2}:?[0-9]{2}$//')"
+  for _rwde_fmt in '%Y-%m-%dT%H:%M:%S' '%Y-%m-%d %H:%M:%S' '%Y-%m-%d' '%d-%b-%Y' '%Y/%m/%d'; do
+    _rwde_out="$(date -j -f "$_rwde_fmt" "$_rwde_clean" +%s 2>/dev/null)"
+    case "$_rwde_out" in
+      '' | *[!0-9-]*) continue ;;
+    esac
+    printf '%s' "$_rwde_out"
+    return 0
+  done
+  return 1
+}
+
+# __rec_whois_humanize_date DATESTR [kind] -> a parenthesized phrase like
+# "1 year, 15 days ago", "in 10 months", or "today". KIND ∈ {created, updated,
+# expires} adjusts wording: for `expires` in the past, prefixes "expired ".
+# Emits nothing on parse failure.
+__rec_whois_humanize_date() {
+  _rwhd_in="$1"
+  _rwhd_kind="${2:-}"
+  _rwhd_epoch="$(__rec_whois_date_epoch "$_rwhd_in")" || return 0
+  _rwhd_now="$(date +%s)"
+  _rwhd_diff=$((_rwhd_epoch - _rwhd_now))
+  if [ "$_rwhd_diff" -lt 0 ]; then
+    _rwhd_past=yes
+    _rwhd_diff=$((-_rwhd_diff))
+  else
+    _rwhd_past=no
+  fi
+  _rwhd_days=$((_rwhd_diff / 86400))
+  if [ "$_rwhd_days" -eq 0 ]; then
+    printf 'today'
+    return 0
+  fi
+  # Approximate calendar units: 365d/yr, 30d/mo. Good enough for "(X ago)" UX.
+  _rwhd_y=$((_rwhd_days / 365))
+  _rwhd_rest=$((_rwhd_days - _rwhd_y * 365))
+  _rwhd_m=$((_rwhd_rest / 30))
+  _rwhd_d=$((_rwhd_rest - _rwhd_m * 30))
+
+  _rwhd_txt=""
+  if [ "$_rwhd_y" -gt 0 ]; then
+    _rwhd_txt="$(__rec_whois_unit "$_rwhd_y" year)"
+    [ "$_rwhd_m" -gt 0 ] && _rwhd_txt="$_rwhd_txt, $(__rec_whois_unit "$_rwhd_m" month)"
+  elif [ "$_rwhd_m" -gt 0 ]; then
+    _rwhd_txt="$(__rec_whois_unit "$_rwhd_m" month)"
+    [ "$_rwhd_d" -gt 0 ] && _rwhd_txt="$_rwhd_txt, $(__rec_whois_unit "$_rwhd_d" day)"
+  else
+    _rwhd_txt="$(__rec_whois_unit "$_rwhd_d" day)"
+  fi
+
+  if [ "$_rwhd_past" = yes ]; then
+    if [ "$_rwhd_kind" = expires ]; then
+      printf 'expired %s ago' "$_rwhd_txt"
+    else
+      printf '%s ago' "$_rwhd_txt"
+    fi
+  else
+    printf 'in %s' "$_rwhd_txt"
+  fi
+}
+
+# __rec_whois_unit N WORD -> "1 year" or "3 years" — pluralizes on N≠1.
+__rec_whois_unit() {
+  if [ "$1" -eq 1 ]; then
+    printf '%s %s' "$1" "$2"
+  else
+    printf '%s %ss' "$1" "$2"
+  fi
+}
+
+# __rec_whois_kv_date KEY VALUE [kind] -> rec_ui_kv-style row plus a dim
+# "(humanized duration)" suffix. KIND is forwarded to __rec_whois_humanize_date.
+__rec_whois_kv_date() {
+  _rwkd_k="$1"
+  _rwkd_v="$2"
+  _rwkd_kind="${3:-}"
+  __rec_ui_emit 1 "$REC_UI_S_DIM" "$(printf '%-10s' "$_rwkd_k:")"
+  printf ' %s' "$_rwkd_v"
+  _rwkd_hum="$(__rec_whois_humanize_date "$_rwkd_v" "$_rwkd_kind")"
+  if [ -n "$_rwkd_hum" ]; then
+    printf ' '
+    __rec_ui_emit 1 "$REC_UI_S_DIM" "($_rwkd_hum)"
+  fi
+  printf '\n'
+}
+
 # rec whois domain <domain>
 __rec_whois_domain() {
   _rwd_domain="$1"
@@ -176,9 +288,9 @@ __rec_whois_domain() {
   _rwd_dnssec="$(__rec_whois_field "$_rwd_out" 'DNSSEC')"
 
   [ -n "$_rwd_registrar" ] && rec_ui_kv registrar "$_rwd_registrar"
-  [ -n "$_rwd_created" ] && rec_ui_kv created "$_rwd_created"
-  [ -n "$_rwd_updated" ] && rec_ui_kv updated "$_rwd_updated"
-  [ -n "$_rwd_expiry" ] && rec_ui_kv expires "$_rwd_expiry"
+  [ -n "$_rwd_created" ] && __rec_whois_kv_date created "$_rwd_created" created
+  [ -n "$_rwd_updated" ] && __rec_whois_kv_date updated "$_rwd_updated" updated
+  [ -n "$_rwd_expiry" ] && __rec_whois_kv_date expires "$_rwd_expiry" expires
   [ -n "$_rwd_dnssec" ] && rec_ui_kv dnssec "$_rwd_dnssec"
 
   if [ -n "$_rwd_status" ]; then
@@ -189,7 +301,7 @@ __rec_whois_domain() {
         rec_ui_kv status "$_rwd_s"
         _rwd_first=0
       else
-        rec_ui_kv '' "$_rwd_s"
+        __rec_whois_kv_cont "$_rwd_s"
       fi
     done
   fi
@@ -202,7 +314,7 @@ __rec_whois_domain() {
         rec_ui_kv ns "$_rwd_n"
         _rwd_first=0
       else
-        rec_ui_kv '' "$_rwd_n"
+        __rec_whois_kv_cont "$_rwd_n"
       fi
     done
   fi
@@ -307,7 +419,7 @@ __rec_whois_ip() {
           rec_ui_kv ptr "$_rwip_p"
           _rwip_first=0
         else
-          rec_ui_kv '' "$_rwip_p"
+          __rec_whois_kv_cont "$_rwip_p"
         fi
       done
     else

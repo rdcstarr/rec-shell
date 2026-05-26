@@ -199,6 +199,60 @@ EOF
   [[ "$output" == *"domain"* && "$output" == *"ip"* ]]
 }
 
+@test "bash: created/expires get a humanized '(X ago)' / '(in X)' suffix" {
+  # Past creation date + past expiry date (2025-08-13 is before today).
+  write_fake_whois_domain
+  whois_in bash linux '__rec_whois_domain example.com'
+  [ "$status" -eq 0 ]
+  # Creation date from 1995 -> decades in the past.
+  [[ "$output" == *"created"*"1995-08-14"*"ago"* ]]
+  # Past expiry should be tagged "expired ... ago" (kind=expires branch).
+  [[ "$output" == *"expires"*"2025-08-13"*"expired"*"ago"* ]]
+}
+
+@test "bash: future expiry renders 'in X' rather than 'ago'" {
+  cat >"$T/bin/whois" <<'EOF'
+#!/bin/sh
+[ "$1" = "--" ] && shift
+cat <<ROWS
+Domain Name: FUTURE.TEST
+Registrar: Test Registrar
+Creation Date: 2020-01-01T00:00:00Z
+Registry Expiry Date: 2099-01-01T00:00:00Z
+Name Server: NS1.FUTURE.TEST
+ROWS
+EOF
+  chmod +x "$T/bin/whois"
+  whois_in bash linux '__rec_whois_domain future.test'
+  [ "$status" -eq 0 ]
+  # Future date -> "in X years"; must NOT carry the "expired" prefix.
+  [[ "$output" == *"expires"*"2099-01-01"*"in "* ]]
+  [[ "$output" != *"expires"*"expired"* ]]
+}
+
+@test "bash: NS continuation lines do not show a stray colon" {
+  # The bug was that multi-value fields used `rec_ui_kv ''`, which prints a
+  # bare ":" as the continuation label. Continuation values should sit on
+  # their own line, prefixed by whitespace only.
+  write_fake_whois_domain
+  whois_in bash linux '__rec_whois_domain example.com'
+  [ "$status" -eq 0 ]
+  # The fake whois has two name servers. The second one (B.IANA-SERVERS.NET)
+  # must appear on a continuation line whose first non-space char is "B",
+  # never ":". grep -E exits non-zero if no matching line exists.
+  printf '%s\n' "$output" | grep -Eq '^[[:space:]]+B\.IANA-SERVERS\.NET$'
+  # And NEVER a line that starts with ":" followed by an NS hostname.
+  ! printf '%s\n' "$output" | grep -Eq '^:[[:space:]]+[A-Z]\.IANA-SERVERS\.NET$'
+}
+
+@test "bash: humanize_date returns empty on unparseable input" {
+  whois_in bash linux '__rec_whois_humanize_date "not a date" && echo CALLED'
+  [ "$status" -eq 0 ]
+  # No "ago"/"in"/"today" text — empty function output, only the CALLED sentinel.
+  [[ "$output" == *"CALLED"* ]]
+  [[ "$output" != *"ago"* && "$output" != *"today"* ]]
+}
+
 @test "bash: is_ip recognizes IPv4, IPv6 and rejects domains" {
   whois_in bash linux '__rec_whois_is_ip 1.2.3.4 && echo Y || echo N'
   [[ "$output" == "Y" ]]
