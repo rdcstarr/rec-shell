@@ -31,8 +31,11 @@ systemd_in() {
 }
 
 @test "bash/linux: missing systemctl yields a clear error" {
-  # No fake systemctl on PATH.
-  systemd_in bash linux '__rec_systemd_dispatch status sshd'
+  # Ubuntu CI runners ship /usr/bin/systemctl, so just filtering PATH isn't
+  # enough — override rec_have so the module behaves as if systemctl is absent.
+  systemd_in bash linux '
+    rec_have() { case "$1" in systemctl) return 1 ;; *) command -v "$1" >/dev/null 2>&1 ;; esac; }
+    __rec_systemd_dispatch status sshd'
   [ "$status" -ne 0 ]
   [[ "$output" == *"systemctl"* ]]
 }
