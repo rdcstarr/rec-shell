@@ -22,6 +22,16 @@ __rec_dispatch() {
     disable) __rec_cmd_toggle disable "$@" ;;
     git) __rec_cmd_git "$@" ;;
     ssh) __rec_cmd_ssh "$@" ;;
+    port) __rec_cmd_port "$@" ;;
+    sys) __rec_cmd_sys "$@" ;;
+    systemd) __rec_cmd_systemd "$@" ;;
+    backup) __rec_cmd_backup "$@" ;;
+    ip) __rec_cmd_ip "$@" ;;
+    whois) __rec_cmd_whois "$@" ;;
+    dns) __rec_cmd_dns "$@" ;;
+    password | passwd | pw) __rec_cmd_password "$@" ;;
+    tips) __rec_cmd_tips "$@" ;;
+    cheat) __rec_cmd_cheat "$@" ;;
     uninstall) __rec_cmd_uninstall "$@" ;;
     help | --help | -h) __rec_cmd_help ;;
     *)
@@ -176,6 +186,43 @@ __rec_cmd_doctor() {
     __rec_no "not a git checkout (reinstall to enable updates)"
   fi
   __rec_doctor_rc
+  printf '\n'
+  __rec_doctor_tools
+}
+
+# doctor tools section — one line per modern CLI tool, ✓/✗, and a note for
+# bash users that two zsh-only plugins are skipped.
+__rec_doctor_tools() {
+  rec_ui_heading "tools"
+  for _rdt_t in fzf:fzf atuin:atuin eza:eza bat:bat fd:fd ripgrep:rg btop:btop ncdu:ncdu whois:whois dig:dig; do
+    _rdt_bin="${_rdt_t#*:}"
+    _rdt_name="${_rdt_t%:*}"
+    if rec_have "$_rdt_bin"; then
+      __rec_ok "$_rdt_name present"
+    elif [ "$_rdt_name" = bat ] && rec_have batcat; then
+      __rec_ok "bat present (as batcat)"
+    elif [ "$_rdt_name" = fd ] && rec_have fdfind; then
+      __rec_ok "fd present (as fdfind)"
+    else
+      __rec_no "$_rdt_name missing"
+    fi
+  done
+  # zsh plugins
+  if [ "$REC_SHELL_NAME" = zsh ]; then
+    if [ -r "$REC_SHELL_DIR/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ]; then
+      __rec_ok "zsh-autosuggestions present"
+    else
+      __rec_no "zsh-autosuggestions missing"
+    fi
+    if [ -r "$REC_SHELL_DIR/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]; then
+      __rec_ok "zsh-syntax-highlighting present"
+    else
+      __rec_no "zsh-syntax-highlighting missing"
+    fi
+  else
+    rec_ui_note "zsh-autosuggestions and zsh-syntax-highlighting are zsh-only"
+  fi
+  unset _rdt_t _rdt_bin _rdt_name
 }
 
 # doctor status lines: ok on stdout, warnings on stdout too (diagnostics are
@@ -341,6 +388,129 @@ __rec_cmd_ssh() {
   __rec_ssh_dispatch "$@"
 }
 
+# Generic lazy-loader factory: source lib/cli-$1.sh if its dispatch is missing,
+# then call __rec_$1_dispatch with the remaining args.
+__rec_cmd_port() {
+  if ! command -v __rec_port_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-port.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-port.sh"
+    else
+      rec_ui_err 'port commands unavailable (missing lib/cli-port.sh)'
+      return 1
+    fi
+  fi
+  __rec_port_dispatch "$@"
+}
+
+__rec_cmd_sys() {
+  if ! command -v __rec_sys_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-sys.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-sys.sh"
+    else
+      rec_ui_err 'sys commands unavailable (missing lib/cli-sys.sh)'
+      return 1
+    fi
+  fi
+  __rec_sys_dispatch "$@"
+}
+
+__rec_cmd_systemd() {
+  if ! command -v __rec_systemd_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-systemd.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-systemd.sh"
+    else
+      rec_ui_err 'systemd commands unavailable (missing lib/cli-systemd.sh)'
+      return 1
+    fi
+  fi
+  __rec_systemd_dispatch "$@"
+}
+
+__rec_cmd_backup() {
+  if ! command -v __rec_backup_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-backup.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-backup.sh"
+    else
+      rec_ui_err 'backup commands unavailable (missing lib/cli-backup.sh)'
+      return 1
+    fi
+  fi
+  __rec_backup_dispatch "$@"
+}
+
+__rec_cmd_ip() {
+  if ! command -v __rec_ip_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-ip.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-ip.sh"
+    else
+      rec_ui_err 'ip commands unavailable (missing lib/cli-ip.sh)'
+      return 1
+    fi
+  fi
+  __rec_ip_dispatch "$@"
+}
+
+__rec_cmd_password() {
+  if ! command -v __rec_password_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-password.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-password.sh"
+    else
+      rec_ui_err 'password command unavailable (missing lib/cli-password.sh)'
+      return 1
+    fi
+  fi
+  __rec_password_dispatch "$@"
+}
+
+__rec_cmd_whois() {
+  if ! command -v __rec_whois_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-whois.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-whois.sh"
+    else
+      rec_ui_err 'whois commands unavailable (missing lib/cli-whois.sh)'
+      return 1
+    fi
+  fi
+  __rec_whois_dispatch "$@"
+}
+
+__rec_cmd_dns() {
+  if ! command -v __rec_dns_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-dns.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-dns.sh"
+    else
+      rec_ui_err 'dns commands unavailable (missing lib/cli-dns.sh)'
+      return 1
+    fi
+  fi
+  __rec_dns_dispatch "$@"
+}
+
+# tips and cheat share lib/cli-tips.sh.
+__rec_cmd_tips() {
+  if ! command -v __rec_tips_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-tips.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-tips.sh"
+    else
+      rec_ui_err 'tips unavailable (missing lib/cli-tips.sh)'
+      return 1
+    fi
+  fi
+  __rec_tips_dispatch "$@"
+}
+
+__rec_cmd_cheat() {
+  if ! command -v __rec_cheat_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-tips.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-tips.sh"
+    else
+      rec_ui_err 'cheat unavailable (missing lib/cli-tips.sh)'
+      return 1
+    fi
+  fi
+  __rec_cheat_dispatch "$@"
+}
+
 __rec_cmd_uninstall() {
   if [ -r "$REC_SHELL_DIR/uninstall.sh" ]; then
     sh "$REC_SHELL_DIR/uninstall.sh" "$@"
@@ -370,6 +540,16 @@ __rec_cmd_help() {
   __rec_help_row "doctor" "Diagnose the installation"
   __rec_help_row "git <command>" "Git helpers: sync, push, release, init"
   __rec_help_row "ssh [alias]" "SSH host picker; add/fav/edit (no arg: picker)"
+  __rec_help_row "port [command]" "Listening ports: list (default), kill, free"
+  __rec_help_row "sys [command]" "Server diagnostics: overview, disk, mem, top, ports, uptime"
+  __rec_help_row "systemd <cmd>" "systemctl wrapper with smart sudo (Linux only)"
+  __rec_help_row "backup <cmd>" "Directory snapshots: create, list, restore, prune"
+  __rec_help_row "ip [command]" "IP address: public (default), local, all"
+  __rec_help_row "whois <target>" "Whois lookup for a domain or IP (+geo, PTR)"
+  __rec_help_row "dns <domain>" "DNS records: A, AAAA, MX, NS, TXT, CNAME, SOA"
+  __rec_help_row "password" "Strong password generator (-> clipboard)"
+  __rec_help_row "tips [next|all]" "One reminder for the modern CLI tools you have"
+  __rec_help_row "cheat [tool]" "Cheatsheet for installed tools (rg/fd/eza/bat/...)"
   __rec_help_row "enable [module]" "Re-enable a module (no arg: interactive picker)"
   __rec_help_row "disable [module]" "Disable a module (no arg: interactive picker)"
   __rec_help_row "uninstall" "Remove rec-shell (--purge also removes config)"
@@ -398,6 +578,16 @@ __rec_cmd_menu() {
     'reload    - re-source rec-shell' \
     'git       - git helpers (sync/push/release/init)' \
     'ssh       - SSH host picker (connect/add/favorite)' \
+    'port      - listening ports (list/kill/free)' \
+    'sys       - server diagnostics (overview/disk/mem/top)' \
+    'systemd   - systemctl wrapper (Linux only)' \
+    'backup    - directory snapshots (create/list/restore)' \
+    'ip        - IP address (public/local/all)' \
+    'whois     - whois lookup (domain or IP)' \
+    'dns       - DNS records (A/AAAA/MX/NS/TXT/CNAME/SOA)' \
+    'password  - strong password generator' \
+    'tips      - one reminder for the CLI tools you have' \
+    'cheat     - cheatsheet for installed tools' \
     'enable    - re-enable a module (picker)' \
     'disable   - disable a module (picker)' \
     'help      - show full help')"

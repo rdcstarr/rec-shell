@@ -66,6 +66,15 @@ for rc in "$HOME/.zshrc" "$HOME/.bashrc" /etc/zshrc /etc/zsh/zshrc /etc/bash.bas
   strip_rc "$rc"
 done
 
+# Drop the profile.d shim written by --system installs.
+if [ -f /etc/profile.d/rec-shell.sh ]; then
+  if [ -w /etc/profile.d ]; then
+    rm -f /etc/profile.d/rec-shell.sh && ok "removed /etc/profile.d/rec-shell.sh"
+  else
+    skip "no write permission: /etc/profile.d/rec-shell.sh"
+  fi
+fi
+
 for d in "$HOME/.rec-shell" /opt/rec-shell; do
   [ -d "$d" ] || continue
   if [ -w "$(dirname "$d")" ]; then

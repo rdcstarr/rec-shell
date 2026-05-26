@@ -30,13 +30,28 @@ Per user (no root):
 curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | bash
 ```
 
-System-wide for every user on a server (adds the loader to `/etc` rc files):
+System-wide for every user on a server (adds the loader to `/etc` rc files
+plus a `/etc/profile.d/rec-shell.sh` drop-in so all future login shells pick
+it up automatically):
 
 ```sh
 curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | sudo bash -s -- --system
 ```
 
-Then restart your shell (or `exec $SHELL -l`) and run `rec doctor`.
+The install runs in a subshell, so it can't add `rec` to your *current*
+interactive shell — that's a Unix process-model thing, not a bug. To use
+`rec` immediately, either start a fresh login shell (`exec $SHELL -l`) or
+chain it into the install command so it happens automatically:
+
+```sh
+# per-user
+curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | bash && exec $SHELL -l
+
+# system-wide
+curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | sudo bash -s -- --system && exec $SHELL -l
+```
+
+Then run `rec doctor`.
 
 Installer flags: `--user` (default), `--system`, `--unattended`, `--no-omp`,
 `--no-zoxide`, `--dir DIR`, `--ref REF`. Overrides: `REC_SHELL_REPO_URL`,
@@ -58,6 +73,15 @@ Installer flags: `--user` (default), `--system`, `--unattended`, `--no-omp`,
 | `reload` | Re-source rec-shell in the current shell |
 | `doctor` | Diagnose the installation |
 | `git <command>` | Git helpers: `sync`, `push`, `release`, `init` (see below) |
+| `ssh [alias]` | Interactive SSH host picker (also `add`/`fav`/`edit`) |
+| `port [cmd]` | Listening ports: `list` (default), `kill <port>`, `free <port>` |
+| `sys [cmd]` | Server diagnostics: overview, `disk`, `mem`, `top`, `ports`, `uptime` |
+| `systemd <cmd>` | `systemctl` wrapper with smart sudo (Linux only) |
+| `backup <cmd>` | Directory snapshots: `create`, `list`, `restore`, `prune` |
+| `ip [cmd]` | IP address: `public` (default), `local`, `all` |
+| `whois <target>` | Whois lookup; auto-detects domain vs IP. IPs also show geolocation + PTR |
+| `dns <domain> [type]` | DNS records via `dig`: A, AAAA, MX, NS, TXT, CNAME, SOA |
+| `password` | Strong password generator (copies to clipboard by default) |
 | `enable` / `disable <module>` | Toggle a module |
 | `uninstall` | Remove rec-shell (`--purge` also removes config) |
 

@@ -57,3 +57,58 @@ if [ "$REC_SHELL_NAME" = bash ] && [ -x /usr/lib/command-not-found ]; then
     return $?
   }
 fi
+
+# --- modern CLI tools ------------------------------------------------------
+# fzf shell hooks (Ctrl+T files, Alt+C directories). Sourced BEFORE atuin so
+# atuin's Ctrl+R binding wins at the end.
+if rec_have fzf; then
+  _fzf_shell=""
+  if [ -d /opt/homebrew/opt/fzf/shell ]; then
+    _fzf_shell=/opt/homebrew/opt/fzf/shell
+  elif [ -d /usr/local/opt/fzf/shell ]; then
+    _fzf_shell=/usr/local/opt/fzf/shell
+  elif [ -d /usr/share/doc/fzf/examples ]; then
+    _fzf_shell=/usr/share/doc/fzf/examples
+  elif [ -d /usr/share/fzf ]; then
+    _fzf_shell=/usr/share/fzf
+  fi
+  if [ -n "$_fzf_shell" ]; then
+    case "$REC_SHELL_NAME" in
+      bash)
+        [ -r "$_fzf_shell/key-bindings.bash" ] && . "$_fzf_shell/key-bindings.bash"
+        [ -r "$_fzf_shell/completion.bash" ] && . "$_fzf_shell/completion.bash"
+        ;;
+      zsh)
+        [ -r "$_fzf_shell/key-bindings.zsh" ] && . "$_fzf_shell/key-bindings.zsh"
+        [ -r "$_fzf_shell/completion.zsh" ] && . "$_fzf_shell/completion.zsh"
+        ;;
+    esac
+  fi
+  unset _fzf_shell
+fi
+
+# atuin (rich shell history — takes over Ctrl+R; sourced AFTER fzf).
+if rec_have atuin; then
+  case "$REC_SHELL_NAME" in
+    bash) eval "$(atuin init bash)" ;;
+    zsh) eval "$(atuin init zsh)" ;;
+  esac
+fi
+
+# Debian/Ubuntu: bat/fd binaries are sometimes installed as batcat/fdfind.
+if ! rec_have bat && rec_have batcat; then alias bat=batcat; fi
+if ! rec_have fd && rec_have fdfind; then alias fd=fdfind; fi
+
+# zsh-only: autosuggestions, then syntax-highlighting (which MUST be last).
+if [ "$REC_SHELL_NAME" = zsh ]; then
+  [ -r "$REC_SHELL_DIR/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ] \
+    && . "$REC_SHELL_DIR/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh"
+  [ -r "$REC_SHELL_DIR/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ] \
+    && . "$REC_SHELL_DIR/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+fi
+
+# Optional: one random rec tip on shell startup. Opt-in only.
+if [ "${REC_TIP_ON_START:-0}" = 1 ] && [ -r "$REC_SHELL_DIR/lib/cli-tips.sh" ]; then
+  . "$REC_SHELL_DIR/lib/cli-tips.sh"
+  command -v __rec_tip_random >/dev/null 2>&1 && __rec_tip_random
+fi
