@@ -60,26 +60,19 @@ fi
 
 # --- modern CLI tools ------------------------------------------------------
 #
-# A few of the upstream installers (atuin's setup script, fzf's local clone
-# install) drop binaries under $HOME/.atuin/bin or $HOME/.fzf/bin which are
-# NOT on PATH by default. Prepend them when they exist so the rec_have
-# checks below (and `rec doctor`, `rec install list`, …) actually see the
-# tool after it's installed via `rec install` — without forcing the user
-# to restart their shell.
-_rec_prepend_path() {
-  [ -d "$1" ] || return 0
+# fzf's user-mode clone install drops binaries under $HOME/.fzf/bin which is
+# NOT on PATH by default. Prepend it when it exists so the rec_have check
+# below (and `rec doctor`, `rec install list`, …) actually sees fzf after
+# `rec install fzf` — without forcing the user to restart their shell.
+if [ -d "$HOME/.fzf/bin" ]; then
   case ":$PATH:" in
-    *":$1:"*) ;;
-    *) PATH="$1:$PATH" ;;
+    *":$HOME/.fzf/bin:"*) ;;
+    *) PATH="$HOME/.fzf/bin:$PATH" ;;
   esac
-}
-_rec_prepend_path "$HOME/.atuin/bin"
-_rec_prepend_path "$HOME/.fzf/bin"
-export PATH
-unset -f _rec_prepend_path
+  export PATH
+fi
 
-# fzf shell hooks (Ctrl+T files, Alt+C directories). Sourced BEFORE atuin so
-# atuin's Ctrl+R binding wins at the end.
+# fzf shell hooks: Ctrl+T (files), Alt+C (cd), Ctrl+R (history search).
 if rec_have fzf; then
   _fzf_shell=""
   if [ -d /opt/homebrew/opt/fzf/shell ]; then
@@ -90,6 +83,8 @@ if rec_have fzf; then
     _fzf_shell=/usr/share/doc/fzf/examples
   elif [ -d /usr/share/fzf ]; then
     _fzf_shell=/usr/share/fzf
+  elif [ -d "$HOME/.fzf/shell" ]; then
+    _fzf_shell="$HOME/.fzf/shell"
   fi
   if [ -n "$_fzf_shell" ]; then
     case "$REC_SHELL_NAME" in
@@ -104,14 +99,6 @@ if rec_have fzf; then
     esac
   fi
   unset _fzf_shell
-fi
-
-# atuin (rich shell history — takes over Ctrl+R; sourced AFTER fzf).
-if rec_have atuin; then
-  case "$REC_SHELL_NAME" in
-    bash) eval "$(atuin init bash)" ;;
-    zsh) eval "$(atuin init zsh)" ;;
-  esac
 fi
 
 # Debian/Ubuntu: bat/fd binaries are sometimes installed as batcat/fdfind.

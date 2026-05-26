@@ -125,7 +125,7 @@ EOF
 # yields one positional per name in BOTH shells.
 @test "bash: __rec_install_interactive splits a multi-line missing list into N args" {
   install_in bash '
-    rec_tools_missing() { printf "atuin\nfd\nbtop\nncdu\nzsh-autosuggestions\nzsh-syntax-highlighting\n"; }
+    rec_tools_missing() { printf "fzf\nfd\nbtop\nncdu\nzsh-autosuggestions\nzsh-syntax-highlighting\n"; }
     __rec_ui_interactive() { return 0; }
     rec_ui_interactive_load() { return 0; }
     rec_ui_multiselect() { shift; printf "GOT_TOOLS:%d\n" "$#" >&2; REC_UI_REPLY=""; }
@@ -136,7 +136,7 @@ EOF
 
 @test "zsh: __rec_install_interactive splits a multi-line missing list into N args" {
   install_in zsh '
-    rec_tools_missing() { printf "atuin\nfd\nbtop\nncdu\nzsh-autosuggestions\nzsh-syntax-highlighting\n"; }
+    rec_tools_missing() { printf "fzf\nfd\nbtop\nncdu\nzsh-autosuggestions\nzsh-syntax-highlighting\n"; }
     __rec_ui_interactive() { return 0; }
     rec_ui_interactive_load() { return 0; }
     rec_ui_multiselect() { shift; printf "GOT_TOOLS:%d\n" "$#" >&2; REC_UI_REPLY=""; }

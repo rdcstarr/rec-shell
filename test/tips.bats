@@ -114,7 +114,7 @@ stub_tool() {
 
 @test "bash: cheat help mentions every accepted tool name" {
   tips_in bash '__rec_cheat_help'
-  for t in rg fd eza bat fzf atuin btop ncdu; do
+  for t in rg fd eza bat fzf btop ncdu; do
     [[ "$output" == *"$t"* ]] || {
       echo "missing $t"
       false

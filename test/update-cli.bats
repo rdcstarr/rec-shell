@@ -84,7 +84,7 @@ up_in() {
       . '$T/inst/rec-shell.sh'
       rec_have() {
         case \$1 in
-          fzf|atuin|eza|bat|fd|fdfind|rg|batcat|btop|ncdu|whois|dig) return 1 ;;
+          fzf|eza|bat|fd|fdfind|rg|batcat|btop|ncdu|whois|dig) return 1 ;;
           *) command -v \$1 >/dev/null 2>&1 ;;
         esac
       }
@@ -109,7 +109,7 @@ up_in() {
       . '$T/inst/rec-shell.sh'
       rec_have() {
         case \$1 in
-          fzf|atuin|eza|bat|fd|fdfind|rg|batcat|btop|ncdu|whois|dig) return 1 ;;
+          fzf|eza|bat|fd|fdfind|rg|batcat|btop|ncdu|whois|dig) return 1 ;;
           *) command -v \$1 >/dev/null 2>&1 ;;
         esac
       }

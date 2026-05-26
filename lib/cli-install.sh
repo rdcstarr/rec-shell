@@ -142,11 +142,10 @@ __rec_install_interactive() {
 
 # Common exec path: split the CSV tool list and install each tool individually
 # under a spinner, redirecting the (typically verbose) apt/curl output to a
-# per-tool log file at $REC_CACHE_DIR/install-logs/<tool>.log. atuin is the
-# one exception — its upstream installer asks the user a few questions, so
-# we let its output through directly. install.sh itself REQUIRES bash (it
-# uses `set -o pipefail`, `local`, `[[ ]]`), so we never call it via `sh` —
-# on Debian-family systems /bin/sh is dash and would refuse `pipefail`.
+# per-tool log file at $REC_CACHE_DIR/install-logs/<tool>.log. install.sh
+# itself REQUIRES bash (it uses `set -o pipefail`, `local`, `[[ ]]`), so we
+# never call it via `sh` — on Debian-family systems /bin/sh is dash and would
+# refuse `pipefail`.
 __rec_install_exec() {
   _rin_csv="$1"
   if [ ! -r "$REC_SHELL_DIR/install.sh" ]; then
@@ -174,64 +173,44 @@ __rec_install_exec() {
   # shellcheck disable=SC2086 # intentional word-split on comma
   for _rin_tool in $_rin_csv; do
     [ -z "$_rin_tool" ] && continue
-    _rin_kind="$(rec_tools_field "$_rin_tool" 3)"
     _rin_log="$_rin_logdir/$_rin_tool.log"
-    case "$_rin_kind" in
-      special-atuin)
-        # atuin's upstream installer has interactive prompts (sync sign-up,
-        # AI opt-in, daemon opt-in). Let output through so the user sees and
-        # answers them; tee a copy into the log for post-mortem.
-        rec_ui_info "Installing $_rin_tool — interactive, may ask a few questions..."
-        if bash "$REC_SHELL_DIR/install.sh" --tools-only --unattended \
-          --tools="$_rin_tool" 2>&1 | tee "$_rin_log"; then
-          _rin_ok=$((_rin_ok + 1))
-        else
-          _rin_fail=$((_rin_fail + 1))
-          _rin_failed="$_rin_failed $_rin_tool"
-        fi
-        ;;
-      *)
-        # Everything else: spinner + log when available, otherwise a
-        # one-line step + log. rec_ui_spin already reports ✓/✗; the
-        # fallback path emits its own ok/err.
-        if command -v rec_ui_spin >/dev/null 2>&1; then
-          if rec_ui_spin "installing $_rin_tool" \
-            sh -c "bash '$REC_SHELL_DIR/install.sh' --tools-only --unattended --tools='$_rin_tool' >'$_rin_log' 2>&1"; then
-            _rin_ok=$((_rin_ok + 1))
-          else
-            rec_ui_note "log: $_rin_log"
-            _rin_fail=$((_rin_fail + 1))
-            _rin_failed="$_rin_failed $_rin_tool"
-          fi
-        else
-          rec_ui_step "installing $_rin_tool"
-          if bash "$REC_SHELL_DIR/install.sh" --tools-only --unattended \
-            --tools="$_rin_tool" >"$_rin_log" 2>&1; then
-            rec_ui_ok "$_rin_tool installed"
-            _rin_ok=$((_rin_ok + 1))
-          else
-            rec_ui_err "$_rin_tool failed"
-            rec_ui_note "log: $_rin_log"
-            _rin_fail=$((_rin_fail + 1))
-            _rin_failed="$_rin_failed $_rin_tool"
-          fi
-        fi
-        ;;
-    esac
+    # Spinner + log when available, otherwise a one-line step + log.
+    # rec_ui_spin already reports ✓/✗; the fallback path emits its own ok/err.
+    if command -v rec_ui_spin >/dev/null 2>&1; then
+      if rec_ui_spin "installing $_rin_tool" \
+        sh -c "bash '$REC_SHELL_DIR/install.sh' --tools-only --unattended --tools='$_rin_tool' >'$_rin_log' 2>&1"; then
+        _rin_ok=$((_rin_ok + 1))
+      else
+        rec_ui_note "log: $_rin_log"
+        _rin_fail=$((_rin_fail + 1))
+        _rin_failed="$_rin_failed $_rin_tool"
+      fi
+    else
+      rec_ui_step "installing $_rin_tool"
+      if bash "$REC_SHELL_DIR/install.sh" --tools-only --unattended \
+        --tools="$_rin_tool" >"$_rin_log" 2>&1; then
+        rec_ui_ok "$_rin_tool installed"
+        _rin_ok=$((_rin_ok + 1))
+      else
+        rec_ui_err "$_rin_tool failed"
+        rec_ui_note "log: $_rin_log"
+        _rin_fail=$((_rin_fail + 1))
+        _rin_failed="$_rin_failed $_rin_tool"
+      fi
+    fi
   done
   IFS="$_rin_OLDIFS"
   # Bring freshly-installed binaries into the live shell's PATH so the next
-  # `rec doctor` / `rec install list` immediately reflects them. atuin's
-  # upstream installer drops binaries in ~/.atuin/bin and fzf's user-mode
-  # clone install drops them in ~/.fzf/bin — neither is on PATH by default.
-  for _rin_extra in "$HOME/.atuin/bin" "$HOME/.fzf/bin"; do
-    [ -d "$_rin_extra" ] || continue
+  # `rec doctor` / `rec install list` immediately reflects them. fzf's
+  # user-mode clone install drops binaries in ~/.fzf/bin which isn't on
+  # PATH by default.
+  if [ -d "$HOME/.fzf/bin" ]; then
     case ":$PATH:" in
-      *":$_rin_extra:"*) continue ;;
+      *":$HOME/.fzf/bin:"*) ;;
+      *) PATH="$HOME/.fzf/bin:$PATH" ;;
     esac
-    PATH="$_rin_extra:$PATH"
-  done
-  export PATH
+    export PATH
+  fi
   printf '\n'
   if [ "$_rin_fail" -eq 0 ]; then
     rec_ui_ok "All $_rin_ok tool(s) installed."
@@ -240,5 +219,5 @@ __rec_install_exec() {
     rec_ui_note "Failure logs in $_rin_logdir/"
   fi
   unset _rin_csv _rin_logdir _rin_ok _rin_fail _rin_failed _rin_OLDIFS \
-    _rin_tool _rin_kind _rin_log _rin_extra
+    _rin_tool _rin_log
 }

@@ -29,9 +29,7 @@ REC_TIPS=(
   "bat|bat -p file.json | jq . — bat as syntax-highlighting pager"
   "bat|bat --diff old.txt new.txt — colorful diff"
   "bat|tail -f log.txt | bat --paging=never -l log — live-tail with colors"
-  "atuin|Ctrl+R — fuzzy through ALL history (with timestamps, exit codes)"
-  "atuin|atuin search --cwd . — recall commands run in this directory"
-  "atuin|atuin stats — top commands and frequency"
+  "fzf|Ctrl+R — fuzzy reverse history search"
   "fzf|Ctrl+T — fuzzy pick a file into the current command"
   "fzf|Alt+C — fuzzy cd to any subdirectory"
   "fzf|kill -9 \$(ps aux | fzf | awk '{print \$2}') — interactive kill"
@@ -227,20 +225,11 @@ __rec_cheat_bat() {
 
 __rec_cheat_fzf() {
   __rec_cheat_section "fzf" \
+    "Ctrl+R~~fuzzy reverse history search" \
     "Ctrl+T~~pick files into the current command" \
     "Alt+C~~cd into a subdirectory via fzf" \
-    "Ctrl+R~~history search (overridden by atuin if installed)" \
     "git branch | fzf~~interactive single-line picker" \
     "fzf --multi~~select multiple entries with TAB"
-}
-
-__rec_cheat_atuin() {
-  __rec_cheat_section "atuin" \
-    "Ctrl+R~~fuzzy through ALL history (with metadata)" \
-    "atuin search 'pattern'~~non-interactive search" \
-    "atuin search --cwd .~~history from this directory only" \
-    "atuin stats~~top commands and frequency" \
-    "atuin sync~~push/pull to/from your atuin server"
 }
 
 __rec_cheat_btop() {
@@ -268,7 +257,7 @@ rec cheat — top-5 recipes per installed CLI tool
 Usage:
   rec cheat                Every tool you have installed.
   rec cheat <tool>         Just that tool. Names: rg, fd, eza, bat, fzf,
-                           atuin, btop, ncdu.
+                           btop, ncdu.
 EOF
 }
 
@@ -300,10 +289,6 @@ __rec_cheat_dispatch() {
       }
       rec_have fzf && {
         __rec_cheat_fzf
-        any=1
-      }
-      rec_have atuin && {
-        __rec_cheat_atuin
         any=1
       }
       rec_have btop && {
@@ -355,14 +340,6 @@ __rec_cheat_dispatch() {
         __rec_cheat_fzf
       else
         rec_ui_err 'fzf is not installed'
-        return 1
-      fi
-      ;;
-    atuin)
-      if rec_have atuin; then
-        __rec_cheat_atuin
-      else
-        rec_ui_err 'atuin is not installed'
         return 1
       fi
       ;;

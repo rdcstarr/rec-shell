@@ -26,8 +26,10 @@ cat_in() {
 @test "rec_tools_catalog emits one pipe-separated record per known tool" {
   cat_in bash 'rec_tools_catalog | wc -l | awk "{print \$1}"'
   [ "$status" -eq 0 ]
-  # Catalog must include at least the 12 declared tools.
-  [ "$output" -ge 12 ]
+  # Catalog must include at least the 11 declared tools (atuin was removed
+  # because its Ctrl+R bind conflicted with fzf's; fzf is now the sole
+  # history-search provider).
+  [ "$output" -ge 11 ]
 }
 
 @test "rec_tools_catalog records are well-formed (5 fields each)" {

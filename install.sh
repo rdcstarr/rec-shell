@@ -51,7 +51,7 @@ Usage: install.sh [--user|--system] [--unattended] [--no-omp] [--no-zoxide]
   --ref REF          Check out a specific tag/branch/commit (default: latest tag).
 
 Available tools (default: install all):
-  fzf, atuin, eza, bat, fd, ripgrep, btop, ncdu, whois, dig,
+  fzf, eza, bat, fd, ripgrep, btop, ncdu, whois, dig,
   zsh-autosuggestions, zsh-syntax-highlighting
 
 Environment overrides: REC_SHELL_REPO_URL, REC_SHELL_REF, REC_SHELL_DIR
@@ -521,25 +521,6 @@ ensure_fzf() {
     || warn "fzf install script failed; binaries may be missing."
 }
 
-ensure_atuin() {
-  tool_selected atuin || return 0
-  command -v atuin >/dev/null 2>&1 && {
-    log "atuin already installed"
-    return 0
-  }
-  if [ "$UNATTENDED" -eq 0 ]; then
-    confirm 'Install atuin (magical shell history, takes over Ctrl+R)?' no || {
-      warn "Skipping atuin."
-      return 0
-    }
-  fi
-  log "Installing atuin..."
-  pm_install atuin 2>/dev/null && return 0
-  # Upstream installer (writes to ~/.atuin/bin or /usr/local/bin).
-  curl -sSfL https://setup.atuin.sh | sh -s -- --no-modify-path 2>/dev/null \
-    || warn "atuin install failed; see https://docs.atuin.sh"
-}
-
 ensure_eza() { ensure_tool eza eza 'Install eza (modern ls replacement)?' eza; }
 ensure_bat() { ensure_tool bat bat 'Install bat (modern cat with syntax highlighting)?' bat; }
 ensure_fd() { ensure_tool fd fd 'Install fd (modern find replacement)?' fd fd-find; }
@@ -589,7 +570,6 @@ install_tools_all() {
     return 0
   }
   ensure_fzf
-  ensure_atuin
   ensure_eza
   ensure_bat
   ensure_fd

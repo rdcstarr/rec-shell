@@ -12,13 +12,12 @@
 # rec_tools_catalog -> one record per line, fields separated by '|':
 #   name|bin|kind|packages|description
 #
-#   kind ∈ pm | special-fzf | special-atuin | zsh-plugin
+#   kind ∈ pm | special-fzf | zsh-plugin
 #   packages is CSV (tried in order via install.sh's pm_install); for
 #     zsh-plugin entries it's the git clone URL.
 rec_tools_catalog() {
   cat <<'EOF'
-fzf|fzf|special-fzf|fzf|fuzzy file/dir finder + key bindings
-atuin|atuin|special-atuin|atuin|magical shell history (Ctrl+R)
+fzf|fzf|special-fzf|fzf|fuzzy file/dir finder + key bindings (Ctrl+R, Ctrl+T, Alt+C)
 eza|eza|pm|eza|modern ls replacement
 bat|bat|pm|bat|cat with syntax highlighting
 fd|fd|pm|fd,fd-find|modern find replacement
