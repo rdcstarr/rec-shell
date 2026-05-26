@@ -105,13 +105,21 @@ fi
 if ! rec_have bat && rec_have batcat; then alias bat=batcat; fi
 if ! rec_have fd && rec_have fdfind; then alias fd=fdfind; fi
 
-# zsh-only: autosuggestions, then syntax-highlighting (which MUST be last).
-if [ "$REC_SHELL_NAME" = zsh ]; then
-  [ -r "$REC_SHELL_DIR/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ] \
-    && . "$REC_SHELL_DIR/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh"
-  [ -r "$REC_SHELL_DIR/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ] \
-    && . "$REC_SHELL_DIR/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-fi
+# Shell-specific line-editor enhancements.
+#   zsh -> zsh-autosuggestions + zsh-syntax-highlighting (sourced in that order
+#          because syntax-highlighting must come last)
+#   bash -> ble.sh (single drop-in that ships both features)
+case "$REC_SHELL_NAME" in
+  zsh)
+    [ -r "$REC_SHELL_DIR/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ] \
+      && . "$REC_SHELL_DIR/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh"
+    [ -r "$REC_SHELL_DIR/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ] \
+      && . "$REC_SHELL_DIR/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+    ;;
+  bash)
+    [ -r "$HOME/.local/share/blesh/ble.sh" ] && . "$HOME/.local/share/blesh/ble.sh"
+    ;;
+esac
 
 # Optional: one random rec tip on shell startup. Opt-in only.
 if [ "${REC_TIP_ON_START:-0}" = 1 ] && [ -r "$REC_SHELL_DIR/lib/cli-tips.sh" ]; then

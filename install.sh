@@ -52,7 +52,8 @@ Usage: install.sh [--user|--system] [--unattended] [--no-omp] [--no-zoxide]
 
 Available tools (default: install all):
   fzf, eza, bat, fd, ripgrep, btop, ncdu, whois, dig,
-  zsh-autosuggestions, zsh-syntax-highlighting
+  ble.sh (bash only),
+  zsh-autosuggestions, zsh-syntax-highlighting (zsh only)
 
 Environment overrides: REC_SHELL_REPO_URL, REC_SHELL_REF, REC_SHELL_DIR
 EOF
@@ -564,6 +565,48 @@ ensure_zsh_syntax_highlighting() {
   ensure_zsh_plugin zsh-syntax-highlighting https://github.com/zsh-users/zsh-syntax-highlighting.git
 }
 
+# ble.sh — the bash counterpart of zsh-autosuggestions + zsh-syntax-highlighting.
+# Upstream's documented install is a recursive shallow clone followed by
+# `make install PREFIX=~/.local`, which copies the prepared scripts (no
+# compilation involved — make is just doing copy/templating). The end result
+# lives at ~/.local/share/blesh/ble.sh, which lib/tools-catalog.sh's
+# bash-plugin presence check looks for.
+ensure_blesh() {
+  tool_selected ble.sh || return 0
+  if [ -r "$HOME/.local/share/blesh/ble.sh" ]; then
+    log "ble.sh already installed"
+    return 0
+  fi
+  if [ "$UNATTENDED" -eq 0 ]; then
+    confirm 'Install ble.sh (bash autosuggestions + syntax highlighting)?' no || {
+      warn "Skipping ble.sh."
+      return 0
+    }
+  fi
+  log "Installing ble.sh..."
+  if ! command -v make >/dev/null 2>&1; then
+    warn "ble.sh install needs 'make' (apt install make / brew install make)."
+    return 1
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    warn "ble.sh install needs 'git'."
+    return 1
+  fi
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  if git clone --recursive --depth 1 --shallow-submodules \
+    https://github.com/akinomyoga/ble.sh.git "$tmpdir/ble.sh" 2>"$tmpdir/clone.err" \
+    && make -C "$tmpdir/ble.sh" install PREFIX="$HOME/.local" >"$tmpdir/make.log" 2>&1; then
+    rm -rf "$tmpdir"
+    return 0
+  fi
+  warn "ble.sh install failed."
+  [ -s "$tmpdir/clone.err" ] && sed 's/^/  /' "$tmpdir/clone.err" >&2
+  [ -s "$tmpdir/make.log" ] && tail -n 20 "$tmpdir/make.log" | sed 's/^/  /' >&2
+  rm -rf "$tmpdir"
+  return 1
+}
+
 install_tools_all() {
   [ "$INSTALL_TOOLS" = none ] && {
     log "Skipping all CLI tools (--no-tools)"
@@ -580,6 +623,7 @@ install_tools_all() {
   ensure_dig
   ensure_zsh_autosuggestions
   ensure_zsh_syntax_highlighting
+  ensure_blesh
 }
 
 # --- run -------------------------------------------------------------------

@@ -204,15 +204,17 @@ __rec_cmd_doctor() {
   __rec_doctor_tools
 }
 
-# doctor tools section — one line per modern CLI tool, ✓/✗, and a note for
-# bash users that two zsh-only plugins are skipped.
+# doctor tools section — one line per modern CLI tool, ✓/✗. Shell-specific
+# line-editor plugins are surfaced in their own block at the bottom so the
+# user sees only what applies to the shell they're actually running:
+# zsh-autosuggestions + zsh-syntax-highlighting on zsh, ble.sh on bash.
 __rec_doctor_tools() {
   rec_ui_heading "tools"
   if command -v rec_tools_catalog >/dev/null 2>&1; then
     rec_tools_catalog | while IFS='|' read -r _rdt_name _rdt_bin _rdt_kind _rdt_pkgs _rdt_desc; do
       [ -z "$_rdt_name" ] && continue
       case "$_rdt_kind" in
-        zsh-plugin) continue ;;
+        zsh-plugin | bash-plugin) continue ;;
       esac
       if rec_tools_present "$_rdt_name"; then
         __rec_ok "$_rdt_name present"
@@ -221,20 +223,24 @@ __rec_doctor_tools() {
       fi
     done
   fi
-  # zsh plugins (kept separate so they only show on zsh and use a different
-  # presence check — the catalog's rec_tools_present already does the right
-  # thing on both shells, but we surface them in their own block for clarity).
-  if [ "$REC_SHELL_NAME" = zsh ]; then
-    for _rdt_p in zsh-autosuggestions zsh-syntax-highlighting; do
-      if rec_tools_present "$_rdt_p"; then
-        __rec_ok "$_rdt_p present"
+  case "$REC_SHELL_NAME" in
+    zsh)
+      for _rdt_p in zsh-autosuggestions zsh-syntax-highlighting; do
+        if rec_tools_present "$_rdt_p"; then
+          __rec_ok "$_rdt_p present"
+        else
+          __rec_no "$_rdt_p missing"
+        fi
+      done
+      ;;
+    bash)
+      if rec_tools_present ble.sh; then
+        __rec_ok "ble.sh present (bash autosuggestions + syntax highlighting)"
       else
-        __rec_no "$_rdt_p missing"
+        __rec_no "ble.sh missing (run: rec install ble.sh)"
       fi
-    done
-  else
-    rec_ui_note "zsh-autosuggestions and zsh-syntax-highlighting are zsh-only"
-  fi
+      ;;
+  esac
   unset _rdt_name _rdt_bin _rdt_kind _rdt_pkgs _rdt_desc _rdt_p
 }
 

@@ -12,9 +12,13 @@
 # rec_tools_catalog -> one record per line, fields separated by '|':
 #   name|bin|kind|packages|description
 #
-#   kind ∈ pm | special-fzf | zsh-plugin
+#   kind ∈ pm | special-fzf | zsh-plugin | bash-plugin
 #   packages is CSV (tried in order via install.sh's pm_install); for
-#     zsh-plugin entries it's the git clone URL.
+#     zsh-plugin / bash-plugin entries it's the git clone URL.
+#
+# Shell-specific plugins (zsh-plugin / bash-plugin) are filtered by
+# rec_tools_missing so they only show up as "missing" in the shell they
+# actually apply to.
 rec_tools_catalog() {
   cat <<'EOF'
 fzf|fzf|special-fzf|fzf|fuzzy file/dir finder + key bindings (Ctrl+R, Ctrl+T, Alt+C)
@@ -26,8 +30,9 @@ btop|btop|pm|btop|interactive system monitor
 ncdu|ncdu|pm|ncdu|interactive disk usage
 whois|whois|pm|whois|whois lookups (rec whois)
 dig|dig|pm|bind,dnsutils,bind-utils,bind-tools|DNS lookups (rec dns)
-zsh-autosuggestions||zsh-plugin|https://github.com/zsh-users/zsh-autosuggestions.git|fish-like autosuggestions
-zsh-syntax-highlighting||zsh-plugin|https://github.com/zsh-users/zsh-syntax-highlighting.git|command-line syntax colors
+ble.sh||bash-plugin|https://github.com/akinomyoga/ble.sh.git|bash line editor — autosuggestions + syntax highlighting (bash only)
+zsh-autosuggestions||zsh-plugin|https://github.com/zsh-users/zsh-autosuggestions.git|fish-like autosuggestions (zsh only)
+zsh-syntax-highlighting||zsh-plugin|https://github.com/zsh-users/zsh-syntax-highlighting.git|command-line syntax colors (zsh only)
 EOF
 }
 
@@ -38,9 +43,12 @@ rec_tools_field() {
 }
 
 # rec_tools_present NAME -> 0 if installed, 1 otherwise.
-# For zsh-plugin entries we check for the main plugin file under
-# $REC_SHELL_DIR/plugins/<name>/<name>.zsh; for everything else we check
-# for the catalogued binary on PATH (with the usual Debian aliases).
+# Per-kind detection:
+#   zsh-plugin   -> readable file at $REC_SHELL_DIR/plugins/<name>/<name>.zsh
+#   bash-plugin  -> readable file at $HOME/.local/share/blesh/ble.sh
+#                   (currently only ble.sh; hardcoded because that's where its
+#                   Makefile installs to)
+#   everything   -> catalogued binary on PATH (with Debian bat/fd aliases).
 rec_tools_present() {
   _rtp_name="$1"
   _rtp_kind="$(rec_tools_field "$_rtp_name" 3)"
@@ -51,6 +59,14 @@ rec_tools_present() {
   case "$_rtp_kind" in
     zsh-plugin)
       if [ -r "$REC_SHELL_DIR/plugins/$_rtp_name/$_rtp_name.zsh" ]; then
+        unset _rtp_name _rtp_kind
+        return 0
+      fi
+      unset _rtp_name _rtp_kind
+      return 1
+      ;;
+    bash-plugin)
+      if [ -r "$HOME/.local/share/blesh/ble.sh" ]; then
         unset _rtp_name _rtp_kind
         return 0
       fi
@@ -89,12 +105,20 @@ rec_tools_present() {
 }
 
 # rec_tools_missing -> emit (one per line) the names of catalog tools that
-# are NOT installed on this host.
+# are NOT installed on this host AND apply to the current shell. zsh-plugin
+# entries are skipped under bash, and bash-plugin entries are skipped under
+# zsh, so `rec install` never offers the wrong one.
 rec_tools_missing() {
-  rec_tools_catalog | awk -F'|' '{ print $1 }' | while IFS= read -r _rtm_n; do
-    [ -z "$_rtm_n" ] && continue
-    rec_tools_present "$_rtm_n" || printf '%s\n' "$_rtm_n"
-  done
+  rec_tools_catalog | awk -F'|' '{ print $1 "|" $3 }' \
+    | while IFS='|' read -r _rtm_n _rtm_k; do
+      [ -z "$_rtm_n" ] && continue
+      case "$_rtm_k" in
+        zsh-plugin) [ "$REC_SHELL_NAME" = zsh ] || continue ;;
+        bash-plugin) [ "$REC_SHELL_NAME" = bash ] || continue ;;
+      esac
+      rec_tools_present "$_rtm_n" || printf '%s\n' "$_rtm_n"
+    done
+  unset _rtm_n _rtm_k
 }
 
 # rec_tools_count_missing -> print the count of missing tools.

@@ -52,18 +52,32 @@ __rec_install_list() {
   rec_ui_heading "rec-shell tools"
   rec_tools_catalog | while IFS='|' read -r _ril_name _ril_bin _ril_kind _ril_pkgs _ril_desc; do
     [ -z "$_ril_name" ] && continue
+    # Shell-mismatch entries render dim with "—" instead of ✓/⚠ so the user
+    # sees the full catalog but knows which lines don't apply here.
+    _ril_skip=0
+    case "$_ril_kind" in
+      zsh-plugin) [ "$REC_SHELL_NAME" = zsh ] || _ril_skip=1 ;;
+      bash-plugin) [ "$REC_SHELL_NAME" = bash ] || _ril_skip=1 ;;
+    esac
+    if [ "$_ril_skip" -eq 1 ]; then
+      __rec_ui_emit 1 "$REC_UI_S_DIM" "—"
+      printf ' '
+      __rec_ui_emit 1 "$REC_UI_S_DIM" "$(printf '%-24s' "$_ril_name")"
+      __rec_ui_emit 1 "$REC_UI_S_DIM" " $_ril_desc"
+      printf '\n'
+      continue
+    fi
     if rec_tools_present "$_ril_name"; then
       __rec_ui_emit 1 "$REC_UI_S_GREEN" "$REC_UI_G_OK"
-      printf ' '
     else
       __rec_ui_emit 1 "$REC_UI_S_YELLOW" "$REC_UI_G_WARN"
-      printf ' '
     fi
+    printf ' '
     __rec_ui_emit 1 "$REC_UI_S_CYAN" "$(printf '%-24s' "$_ril_name")"
     __rec_ui_emit 1 "$REC_UI_S_DIM" " $_ril_desc"
     printf '\n'
   done
-  unset _ril_name _ril_bin _ril_kind _ril_pkgs _ril_desc
+  unset _ril_name _ril_bin _ril_kind _ril_pkgs _ril_desc _ril_skip
 }
 
 # `rec install <name>...` -> validate names against the catalog, then install.
