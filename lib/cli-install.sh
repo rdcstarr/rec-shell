@@ -1,4 +1,5 @@
 # shellcheck shell=sh
+# shellcheck disable=SC1090,SC1091 # we source modules/integrations.sh by path
 #
 # lib/cli-install.sh — the `rec install` command. Lazy-loaded by lib/cli.sh.
 # Drives an interactive multiselect over rec_tools_catalog and shells out
@@ -224,6 +225,14 @@ __rec_install_exec() {
       *) PATH="$HOME/.fzf/bin:$PATH" ;;
     esac
     export PATH
+  fi
+  # Re-source modules/integrations.sh so newly-installed shell hooks (fzf
+  # key-bindings, ble.sh autosuggestions + syntax highlighting, zsh plugins)
+  # become active in the user's CURRENT shell — without a `rec reload` or a
+  # new login. Skip when nothing actually installed so the all-failed path
+  # stays quiet.
+  if [ "$_rin_ok" -gt 0 ] && [ -r "$REC_SHELL_DIR/modules/integrations.sh" ]; then
+    . "$REC_SHELL_DIR/modules/integrations.sh" 2>/dev/null
   fi
   printf '\n'
   if [ "$_rin_fail" -eq 0 ]; then

@@ -357,6 +357,11 @@ rec_ui_input() {
 
 # rec_ui_spin LABEL CMD [ARG...] -> run CMD with a spinner; print ✓/✗ + LABEL;
 # return CMD's exit code. Non-TTY: run synchronously (no animation, no hang).
+#
+# Interactive bash/zsh have job control (monitor mode) on by default, which
+# prints "[1] PID" when a background process starts and "[1]+ Done/Exit N"
+# when it finishes — both would leak into our otherwise-clean spinner block.
+# We turn monitor mode off around the `&` invocation and restore it after.
 rec_ui_spin() {
   _rui_label=$1
   shift
@@ -367,6 +372,12 @@ rec_ui_spin() {
     return "$_rui_rc"
   fi
 
+  # Remember the prior monitor-mode state so we can restore it.
+  case "$-" in
+    *m*) _rui_mon=1 ;;
+    *) _rui_mon=0 ;;
+  esac
+  set +m
   "$@" >/dev/null 2>&1 &
   _rui_pid=$!
   trap '__rec_ui_spin_cleanup "$_rui_pid"' INT TERM
@@ -382,9 +393,11 @@ rec_ui_spin() {
     done
     printf '\r\033[2K\033[?25h'
   } >&2
-  wait "$_rui_pid"
+  wait "$_rui_pid" 2>/dev/null
   _rui_rc=$?
   trap - INT TERM
+  [ "$_rui_mon" = 1 ] && set -m
+  unset _rui_mon
   if [ "$_rui_rc" -eq 0 ]; then rec_ui_ok "$_rui_label"; else rec_ui_err "$_rui_label"; fi
   return "$_rui_rc"
 }
