@@ -78,17 +78,45 @@ if [ -n "$_rec_old_lc" ]; then LC_ALL="$_rec_old_lc"; else unset LC_ALL; fi
 unset _rec_mod _rec_key _rec_disabled _rec_old_lc _rec_nomatch_restore
 
 # 7) The `rec` command. A function (not a PATH script) so `reload` and `update`
-#    can re-source the live shell, lazy-loaded on first use. `rec-shell` stays
-#    available as a back-compat alias.
+#    can re-source the live shell. Lazy-loads lib/cli.sh on first use AND
+#    auto-detects when that file has changed on disk (a successful `rec update`
+#    rewrites it). When the mtime moves we drop every cached dispatch function
+#    so the next invocation re-sources the freshly updated code — no shell
+#    restart required after an update.
+
+# __rec_unset_lazy_dispatchers — clear every dispatch function defined by the
+# lib/cli-*.sh lazy-load cluster. Used by `rec()` (mtime-change auto-refresh)
+# AND by lib/cli.sh:__rec_cmd_reload, so the catalog of group names lives in
+# exactly one place.
+__rec_unset_lazy_dispatchers() {
+  unset -f __rec_dispatch \
+    __rec_git_dispatch __rec_ssh_dispatch \
+    __rec_port_dispatch __rec_sys_dispatch __rec_systemd_dispatch \
+    __rec_backup_dispatch __rec_ip_dispatch \
+    __rec_whois_dispatch __rec_dns_dispatch \
+    __rec_install_dispatch \
+    __rec_password_dispatch \
+    __rec_tips_dispatch __rec_cheat_dispatch 2>/dev/null
+}
+
 rec() {
-  if ! command -v __rec_dispatch >/dev/null 2>&1; then
-    if [ -r "$REC_SHELL_DIR/lib/cli.sh" ]; then
-      . "$REC_SHELL_DIR/lib/cli.sh"
-    else
-      printf 'rec-shell: CLI not found at %s\n' "$REC_SHELL_DIR/lib/cli.sh" >&2
-      return 1
-    fi
+  _rec_cli="$REC_SHELL_DIR/lib/cli.sh"
+  if [ ! -r "$_rec_cli" ]; then
+    printf 'rec-shell: CLI not found at %s\n' "$_rec_cli" >&2
+    unset _rec_cli
+    return 1
   fi
+  # mtime detection: BSD `stat -f %m`, GNU `stat -c %Y`. Either gives an
+  # integer epoch; we just compare them as strings.
+  _rec_mt="$(stat -f '%m' "$_rec_cli" 2>/dev/null || stat -c '%Y' "$_rec_cli" 2>/dev/null)"
+  if [ -n "$_rec_mt" ] && [ "${REC_CLI_MTIME:-}" != "$_rec_mt" ]; then
+    __rec_unset_lazy_dispatchers
+    REC_CLI_MTIME="$_rec_mt"
+  fi
+  if ! command -v __rec_dispatch >/dev/null 2>&1; then
+    . "$_rec_cli"
+  fi
+  unset _rec_cli _rec_mt
   __rec_dispatch "$@"
 }
 # Back-compat: keep the old `rec-shell` command name working. A function (not an

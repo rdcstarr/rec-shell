@@ -161,19 +161,14 @@ __rec_cmd_update() {
 __rec_cmd_reload() {
   unset REC_SHELL_LOADED
   . "$REC_SHELL_DIR/rec-shell.sh"
-  # Every command group (lib/cli-*.sh) is lazy-loaded and its dispatch
-  # function is cached in RAM on first use. After an update we have to drop
-  # ALL of them so the next `rec <group>` call re-sources the freshly
-  # updated lib/cli-*.sh — otherwise a bugfix landed today would only take
-  # effect after the user opens a brand-new shell.
-  unset -f __rec_dispatch \
-    __rec_git_dispatch __rec_ssh_dispatch \
-    __rec_port_dispatch __rec_sys_dispatch __rec_systemd_dispatch \
-    __rec_backup_dispatch __rec_ip_dispatch \
-    __rec_whois_dispatch __rec_dns_dispatch \
-    __rec_install_dispatch \
-    __rec_password_dispatch \
-    __rec_tips_dispatch __rec_cheat_dispatch 2>/dev/null
+  # Drop every lazy command-group dispatcher (the catalog lives in
+  # rec-shell.sh:__rec_unset_lazy_dispatchers) so the next `rec <group>`
+  # call re-sources its lib/cli-*.sh from disk. Reset REC_CLI_MTIME too so
+  # rec()'s mtime-change auto-refresh re-evaluates from scratch.
+  if command -v __rec_unset_lazy_dispatchers >/dev/null 2>&1; then
+    __rec_unset_lazy_dispatchers
+  fi
+  unset REC_CLI_MTIME
   rec_ui_ok "rec-shell reloaded ($(rec_installed_version 2>/dev/null || echo '?'))."
 }
 

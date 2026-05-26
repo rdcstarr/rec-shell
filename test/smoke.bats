@@ -241,3 +241,66 @@ load_in() {
   [[ "$output" == *"rec install"* ]]
   [[ "$output" == *"list"* ]]
 }
+
+# Regression: rec() should detect when lib/cli.sh has been overwritten on
+# disk (a successful `rec update`) and transparently re-source it. We
+# simulate the "file changed" condition by clearing REC_CLI_MTIME after the
+# initial load, and pollute __rec_dispatch — auto-refresh must wipe the
+# pollution and call the freshly-sourced real dispatcher.
+@test "bash: rec() auto-refreshes when lib/cli.sh mtime changes" {
+  REC_SHELL_ARGS="--norc" load_in bash '
+    rec version >/dev/null 2>&1
+    __rec_dispatch() { echo POLLUTED_DISPATCH; }
+    unset REC_CLI_MTIME
+    rec version 2>&1'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"POLLUTED_DISPATCH"* ]]
+  [[ "$output" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]
+}
+
+@test "zsh: rec() auto-refreshes when lib/cli.sh mtime changes" {
+  REC_SHELL_ARGS="-f" load_in zsh '
+    rec version >/dev/null 2>&1
+    __rec_dispatch() { echo POLLUTED_DISPATCH; }
+    unset REC_CLI_MTIME
+    rec version 2>&1'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"POLLUTED_DISPATCH"* ]]
+  [[ "$output" =~ [0-9]+\.[0-9]+\.[0-9]+ ]]
+}
+
+# modules/aliases: top → btop when btop is installed.
+@test "aliases: top is aliased to btop when btop is on PATH" {
+  REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  run bash --norc -c "
+    REC_OS=mac
+    rec_have() { [ \"\$1\" = btop ]; }
+    . '$REPO_ROOT/modules/aliases.sh'
+    alias top"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"btop"* ]]
+}
+
+@test "aliases: top falls back to platform default when btop is missing (mac)" {
+  REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  run bash --norc -c "
+    REC_OS=mac
+    rec_have() { return 1; }
+    . '$REPO_ROOT/modules/aliases.sh'
+    alias top"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"top -o cpu"* ]]
+  [[ "$output" != *"btop"* ]]
+}
+
+@test "aliases: top falls back to htop->top chain on Linux when btop missing" {
+  REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  run bash --norc -c "
+    REC_OS=linux
+    rec_have() { return 1; }
+    . '$REPO_ROOT/modules/aliases.sh'
+    alias top"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"htop"* ]]
+  [[ "$output" != *"btop"* ]]
+}
