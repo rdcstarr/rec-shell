@@ -26,6 +26,7 @@ MARKER="# rec-shell"
 TOOLS_ALLOW=""     # --tools=a,b,c (empty = no allowlist)
 TOOLS_DENY=""      # --without=a,b,c
 INSTALL_TOOLS=auto # auto | none  (--no-tools sets none)
+TOOLS_ONLY=0
 
 usage() {
   cat <<'EOF'
@@ -40,6 +41,9 @@ Usage: install.sh [--user|--system] [--unattended] [--no-omp] [--no-zoxide]
   --no-omp           Do not install oh-my-posh.
   --no-zoxide        Do not install zoxide (the `z` smart-cd command).
   --no-tools         Skip ALL of the modern CLI tools below.
+  --tools-only       Only install/refresh the modern CLI tools (skip clone,
+                     rc-loader, oh-my-posh, zoxide). Useful when re-running
+                     install.sh from an already-installed checkout.
   --tools=LIST       Install only the listed tools (comma-separated).
   --without=LIST     Install all tools EXCEPT those listed (comma-separated).
                      --tools and --without are mutually exclusive.
@@ -154,6 +158,7 @@ while [ $# -gt 0 ]; do
     --no-omp) INSTALL_OMP=no ;;
     --no-zoxide) INSTALL_ZOXIDE=no ;;
     --no-tools) INSTALL_TOOLS=none ;;
+    --tools-only) TOOLS_ONLY=1 ;;
     --tools=*) TOOLS_ALLOW="${1#*=}" ;;
     --tools)
       shift
@@ -585,6 +590,14 @@ install_tools_all() {
 }
 
 # --- run -------------------------------------------------------------------
+if [ "$TOOLS_ONLY" -eq 1 ]; then
+  log "Installing/refreshing CLI tools only (--tools-only)"
+  TARGET_DIR="${REC_SHELL_DIR:-$TARGET_DIR}"
+  install_tools_all
+  ok "tools install complete."
+  exit 0
+fi
+
 log "Installing rec-shell (${C_B}${MODE}${C_0}) into ${C_B}${TARGET_DIR}${C_0}"
 ensure_git
 clone_or_update
