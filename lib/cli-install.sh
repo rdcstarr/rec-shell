@@ -114,7 +114,14 @@ __rec_install_interactive() {
     unset _rin_miss
     return 0
   fi
-  # Build space-separated args for rec_ui_multiselect.
+  # Split the newline list into positional args for rec_ui_multiselect.
+  # zsh does NOT word-split unquoted variable expansion by default, so the
+  # whole multi-line string would land as a single positional and break the
+  # multiselect's cursor math. Toggle sh_word_split locally on zsh (mirrors
+  # the pattern in __rec_toggle_interactive in lib/cli.sh).
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    setopt local_options sh_word_split 2>/dev/null
+  fi
   set --
   _rin_OLDIFS="$IFS"
   IFS='

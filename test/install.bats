@@ -107,3 +107,31 @@ EOF
   # returns 0, or prints the same as `list` — either is acceptable here.
   [[ "$output" == *"rec install"* ]]
 }
+
+# Regression: zsh does not word-split unquoted variable expansion by default,
+# so a newline-delimited `rec_tools_missing` would land as a single positional
+# inside __rec_install_interactive and break the multiselect's cursor math
+# (rendering the option list duplicated on every arrow keypress). The fix is
+# `setopt local_options sh_word_split` for zsh; this test verifies the split
+# yields one positional per name in BOTH shells.
+@test "bash: __rec_install_interactive splits a multi-line missing list into N args" {
+  install_in bash '
+    rec_tools_missing() { printf "atuin\nfd\nbtop\nncdu\nzsh-autosuggestions\nzsh-syntax-highlighting\n"; }
+    __rec_ui_interactive() { return 0; }
+    rec_ui_interactive_load() { return 0; }
+    rec_ui_multiselect() { shift; printf "GOT_TOOLS:%d\n" "$#" >&2; REC_UI_REPLY=""; }
+    __rec_install_interactive'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"GOT_TOOLS:6"* ]]
+}
+
+@test "zsh: __rec_install_interactive splits a multi-line missing list into N args" {
+  install_in zsh '
+    rec_tools_missing() { printf "atuin\nfd\nbtop\nncdu\nzsh-autosuggestions\nzsh-syntax-highlighting\n"; }
+    __rec_ui_interactive() { return 0; }
+    rec_ui_interactive_load() { return 0; }
+    rec_ui_multiselect() { shift; printf "GOT_TOOLS:%d\n" "$#" >&2; REC_UI_REPLY=""; }
+    __rec_install_interactive'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"GOT_TOOLS:6"* ]]
+}
