@@ -359,9 +359,12 @@ rec_ui_input() {
 # return CMD's exit code. Non-TTY: run synchronously (no animation, no hang).
 #
 # Interactive bash/zsh have job control (monitor mode) on by default, which
-# prints "[1] PID" when a background process starts and "[1]+ Done/Exit N"
-# when it finishes — both would leak into our otherwise-clean spinner block.
-# We turn monitor mode off around the `&` invocation and restore it after.
+# leaks two lines into our otherwise-clean spinner block:
+#   [1] 12345                <- printed at job START regardless of `set +m`
+#   [1]+ Done   cmd …        <- printed at job END (suppressed by `set +m`)
+# We suppress START by wrapping the `&` in a group whose stderr is redirected
+# (the announcement goes to stderr); and we suppress END by turning monitor
+# mode off via `set +m`. The pid still survives because $! is read after.
 rec_ui_spin() {
   _rui_label=$1
   shift
@@ -378,7 +381,7 @@ rec_ui_spin() {
     *) _rui_mon=0 ;;
   esac
   set +m
-  "$@" >/dev/null 2>&1 &
+  { "$@" >/dev/null 2>&1 & } 2>/dev/null
   _rui_pid=$!
   trap '__rec_ui_spin_cleanup "$_rui_pid"' INT TERM
   {
