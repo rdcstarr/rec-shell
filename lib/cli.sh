@@ -142,6 +142,20 @@ __rec_cmd_update() {
   # `rec` is a function in the live shell, so apply the update immediately.
   __rec_cmd_reload
   rec_banner "$_rcu_new" "updated from $_rcu_old" "rec doctor"
+
+  # Soft nudge: if any modern CLI tools are missing, mention rec install once.
+  # This deliberately runs only when the version actually changed — quiet on
+  # the "already up to date" path.
+  if command -v rec_tools_count_missing >/dev/null 2>&1; then
+    _rcu_missing="$(rec_tools_count_missing 2>/dev/null)"
+    case "$_rcu_missing" in
+      '' | 0) ;;
+      *)
+        rec_ui_note "$_rcu_missing modern CLI tools available — run: rec install"
+        ;;
+    esac
+    unset _rcu_missing
+  fi
 }
 
 __rec_cmd_reload() {

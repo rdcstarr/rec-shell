@@ -70,3 +70,50 @@ up_in() {
   up_in zsh -f 'rec update 2>&1'
   [[ "$output" == *"up to date"* ]]
 }
+
+@test "bash: rec update appends 'rec install' nudge when catalog tools are missing" {
+  # Reuse the setup() fixture: $T/inst is at v0.0.1, $T/origin.git has v0.0.2.
+  # Use a sanitized PATH and override rec_have so every catalog tool reads
+  # as missing — this makes the assertion deterministic across mac/linux.
+  run env -i \
+    HOME="$T/home" PATH="/usr/bin:/bin" TERM=dumb \
+    GIT_CONFIG_GLOBAL="$T/gc" GIT_CONFIG_SYSTEM=/dev/null \
+    XDG_CONFIG_HOME="$T/home/.config" XDG_CACHE_HOME="$T/home/.cache" \
+    REC_UPDATE_CHECK=never \
+    bash --norc -i -c "
+      . '$T/inst/rec-shell.sh'
+      rec_have() {
+        case \$1 in
+          fzf|atuin|eza|bat|fd|fdfind|rg|batcat|btop|ncdu|whois|dig) return 1 ;;
+          *) command -v \$1 >/dev/null 2>&1 ;;
+        esac
+      }
+      rec update 2>&1"
+  [ "$status" -eq 0 ]
+  # The nudge text from __rec_cmd_update (the exact wording from the plan).
+  [[ "$output" == *"rec install"* ]]
+  [[ "$output" == *"modern CLI tools available"* ]]
+}
+
+@test "bash: rec update on the newest tag stays quiet (no nudge on no-op)" {
+  # When there's nothing to update, the function returns early before the
+  # banner + nudge — the existing 'already up to date' message is the only
+  # thing the user sees.
+  git -C "$T/inst" checkout -q v0.0.2
+  run env -i \
+    HOME="$T/home" PATH="/usr/bin:/bin" TERM=dumb \
+    GIT_CONFIG_GLOBAL="$T/gc" GIT_CONFIG_SYSTEM=/dev/null \
+    XDG_CONFIG_HOME="$T/home/.config" XDG_CACHE_HOME="$T/home/.cache" \
+    REC_UPDATE_CHECK=never \
+    bash --norc -i -c "
+      . '$T/inst/rec-shell.sh'
+      rec_have() {
+        case \$1 in
+          fzf|atuin|eza|bat|fd|fdfind|rg|batcat|btop|ncdu|whois|dig) return 1 ;;
+          *) command -v \$1 >/dev/null 2>&1 ;;
+        esac
+      }
+      rec update 2>&1"
+  [[ "$output" == *"up to date"* ]]
+  [[ "$output" != *"rec install"* ]]
+}
