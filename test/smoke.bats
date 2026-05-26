@@ -204,3 +204,10 @@ load_in() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"FRESH"* ]]
 }
+
+@test "bash: rec install help dispatches via cli.sh" {
+  REC_SHELL_ARGS="--norc" load_in bash 'rec install help'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rec install"* ]]
+  [[ "$output" == *"list"* ]]
+}

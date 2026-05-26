@@ -29,6 +29,7 @@ __rec_dispatch() {
     ip) __rec_cmd_ip "$@" ;;
     whois) __rec_cmd_whois "$@" ;;
     dns) __rec_cmd_dns "$@" ;;
+    install) __rec_cmd_install "$@" ;;
     password | passwd | pw) __rec_cmd_password "$@" ;;
     tips) __rec_cmd_tips "$@" ;;
     cheat) __rec_cmd_cheat "$@" ;;
@@ -480,6 +481,18 @@ __rec_cmd_dns() {
   __rec_dns_dispatch "$@"
 }
 
+__rec_cmd_install() {
+  if ! command -v __rec_install_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-install.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-install.sh"
+    else
+      rec_ui_err 'install commands unavailable (missing lib/cli-install.sh)'
+      return 1
+    fi
+  fi
+  __rec_install_dispatch "$@"
+}
+
 # tips and cheat share lib/cli-tips.sh.
 __rec_cmd_tips() {
   if ! command -v __rec_tips_dispatch >/dev/null 2>&1; then
@@ -541,6 +554,7 @@ __rec_cmd_help() {
   __rec_help_row "ip [command]" "IP address: public (default), local, all"
   __rec_help_row "whois <target>" "Whois lookup for a domain or IP (+geo, PTR)"
   __rec_help_row "dns <domain>" "DNS records: A, AAAA, MX, NS, TXT, CNAME, SOA"
+  __rec_help_row "install [tool]" "Install modern CLI tools (interactive picker)"
   __rec_help_row "password" "Strong password generator (-> clipboard)"
   __rec_help_row "tips [next|all]" "One reminder for the modern CLI tools you have"
   __rec_help_row "cheat [tool]" "Cheatsheet for installed tools (rg/fd/eza/bat/...)"
@@ -579,6 +593,7 @@ __rec_cmd_menu() {
     'ip        - IP address (public/local/all)' \
     'whois     - whois lookup (domain or IP)' \
     'dns       - DNS records (A/AAAA/MX/NS/TXT/CNAME/SOA)' \
+    'install   - install modern CLI tools (interactive picker)' \
     'password  - strong password generator' \
     'tips      - one reminder for the CLI tools you have' \
     'cheat     - cheatsheet for installed tools' \
