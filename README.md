@@ -81,6 +81,7 @@ Installer flags: `--user` (default), `--system`, `--unattended`, `--no-omp`,
 | `ip [cmd]` | IP address: `public` (default), `local`, `all` |
 | `whois <target>` | Whois lookup; auto-detects domain vs IP. IPs also show geolocation + PTR |
 | `dns <domain> [type]` | DNS records via `dig`: A, AAAA, MX, NS, TXT, CNAME, SOA |
+| `install [tool]` | Install modern CLI tools (interactive multiselect) |
 | `password` | Strong password generator (copies to clipboard by default) |
 | `enable` / `disable <module>` | Toggle a module |
 | `uninstall` | Remove rec-shell (`--purge` also removes config) |
