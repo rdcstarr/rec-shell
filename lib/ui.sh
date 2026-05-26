@@ -231,4 +231,52 @@ rec_ui_interactive_load() {
   . "$REC_SHELL_DIR/lib/ui-interactive.sh"
 }
 
+# rec_banner [version] [subtitle] [hint] -> the rec-shell brand banner.
+#
+# Three-line cyan logo + an optional dim version line + optional subtitle +
+# optional arrow hint. Used by `rec version`, the tail of `rec update`, and
+# the tail of install.sh (which carries an equivalent inline copy). All
+# arguments are optional — calling `rec_banner` with no args prints just the
+# logo, which is fine for cosmetic contexts.
+#
+# Respects the same color/UTF rules as the rest of the toolkit: NO_COLOR /
+# REC_UI_PLAIN turn off color; non-UTF locales (or REC_UI_ASCII=1) fall back
+# to a plain block-letter version that renders on any terminal.
+rec_banner() {
+  _rbn_v="${1:-}"
+  _rbn_sub="${2:-}"
+  _rbn_hint="${3:-}"
+  if [ "${REC_UI_UTF:-no}" = yes ]; then
+    __rec_ui_emit 1 "$REC_UI_S_CYAN" '   ┏━┓┏━╸┏━╸    ┏━╸╻ ╻┏━╸╻  ╻'
+    printf '\n'
+    __rec_ui_emit 1 "$REC_UI_S_CYAN" '   ┣┳┛┣╸ ┃      ┗━┓┣━┫┣╸ ┃  ┃'
+    printf '\n'
+    __rec_ui_emit 1 "$REC_UI_S_CYAN" '   ╹┗╸┗━╸┗━╸    ┗━┛╹ ╹┗━╸┗━╸┗━╸'
+    printf '\n'
+  else
+    __rec_ui_emit 1 "$REC_UI_S_CYAN" '   ___  ___  ___      ___ _  _ ___ _   _   '
+    printf '\n'
+    __rec_ui_emit 1 "$REC_UI_S_CYAN" '  | _ \| __|/ __|    / __| || | __| | | |  '
+    printf '\n'
+    __rec_ui_emit 1 "$REC_UI_S_CYAN" '  |   /| _|| (__     \__ \ __ | _|| |_| |_ '
+    printf '\n'
+    __rec_ui_emit 1 "$REC_UI_S_CYAN" '  |_|_\|___|\___|    |___/_||_|___|___|___|'
+    printf '\n'
+  fi
+  printf '\n'
+  if [ -n "$_rbn_v" ]; then
+    __rec_ui_emit 1 "$REC_UI_S_DIM" "   modern bash & zsh  $REC_UI_G_GT  v$_rbn_v"
+    printf '\n'
+  fi
+  if [ -n "$_rbn_sub" ]; then
+    __rec_ui_emit 1 "$REC_UI_S_DIM" "   $_rbn_sub"
+    printf '\n'
+  fi
+  if [ -n "$_rbn_hint" ]; then
+    __rec_ui_emit 1 "$REC_UI_S_DIM" "   $REC_UI_G_ARROW $_rbn_hint"
+    printf '\n'
+  fi
+  unset _rbn_v _rbn_sub _rbn_hint
+}
+
 __rec_ui_init

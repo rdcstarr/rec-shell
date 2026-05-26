@@ -109,3 +109,42 @@ setup() {
   run sh -c ". '$UI'; . '$UII'; rec_ui_spin label false </dev/null; echo rc=\$?"
   [[ "$output" == *"rc=1"* ]]
 }
+
+# --- rec_banner ------------------------------------------------------------
+
+@test "rec_banner: UTF logo + version + hint" {
+  run sh -c "LC_ALL=en_US.UTF-8; . '$UI'; rec_banner 1.2.3 'bash on mac' 'rec doctor'"
+  [ "$status" -eq 0 ]
+  # Block-letter logo present.
+  [[ "$output" == *"┏━┓"* ]]
+  # Version line.
+  [[ "$output" == *"modern bash & zsh"* && "$output" == *"v1.2.3"* ]]
+  # Subtitle and hint lines.
+  [[ "$output" == *"bash on mac"* ]]
+  [[ "$output" == *"➜"*"rec doctor"* ]]
+}
+
+@test "rec_banner: ASCII fallback drops box-drawing chars" {
+  run sh -c "REC_UI_ASCII=1; . '$UI'; rec_banner 1.2.3"
+  [ "$status" -eq 0 ]
+  # No UTF box-drawing.
+  [[ "$output" != *"┏"* && "$output" != *"╸"* ]]
+  # Still carries the brand text and version.
+  [[ "$output" == *"modern bash & zsh"* ]]
+  [[ "$output" == *"v1.2.3"* ]]
+  # The hint arrow degrades to "->".
+  [[ "$output" != *"➜"* ]]
+}
+
+@test "rec_banner: no args prints just the logo, no trailing version line" {
+  run sh -c "LC_ALL=en_US.UTF-8; . '$UI'; rec_banner"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"┏━┓"* ]]
+  [[ "$output" != *"modern bash"* ]]
+}
+
+@test "rec_banner: NO_COLOR suppresses ANSI escapes" {
+  run sh -c "NO_COLOR=1; CLICOLOR_FORCE=1; LC_ALL=en_US.UTF-8; . '$UI'; rec_banner 1.2.3"
+  [[ "$output" != *"$ESC"* ]]
+  [[ "$output" == *"v1.2.3"* ]]
+}

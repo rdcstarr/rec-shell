@@ -49,16 +49,10 @@ __rec_cmd_version() {
   if [ -d "$REC_SHELL_DIR/.git" ] && rec_have git; then
     _rcv_sha="$(git -C "$REC_SHELL_DIR" rev-parse --short HEAD 2>/dev/null)"
   fi
-  __rec_ui_emit 1 "$REC_UI_S_BOLD" "rec-shell"
-  printf ' '
-  __rec_ui_emit 1 "$REC_UI_S_CYAN" "$_rcv_ver"
-  if [ -n "$_rcv_sha" ]; then
-    printf ' '
-    __rec_ui_emit 1 "$REC_UI_S_DIM" "($_rcv_sha)"
-  fi
-  printf ' '
-  __rec_ui_emit 1 "$REC_UI_S_DIM" "— $REC_SHELL_NAME on $REC_OS"
-  printf '\n'
+  _rcv_sub="$REC_SHELL_NAME on $REC_OS"
+  [ -n "$_rcv_sha" ] && _rcv_sub="$_rcv_sub ($_rcv_sha)"
+  rec_banner "$_rcv_ver" "$_rcv_sub"
+  unset _rcv_ver _rcv_sha _rcv_sub
 }
 
 __rec_cmd_check() {
@@ -146,6 +140,7 @@ __rec_cmd_update() {
   rec_ui_ok "rec-shell updated: $_rcu_old $REC_UI_G_ARROW $_rcu_new."
   # `rec` is a function in the live shell, so apply the update immediately.
   __rec_cmd_reload
+  rec_banner "$_rcu_new" "updated from $_rcu_old" "rec doctor"
 }
 
 __rec_cmd_reload() {

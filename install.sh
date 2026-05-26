@@ -95,6 +95,39 @@ die() {
   exit 1
 }
 
+# installer_banner VERSION [hint] -> print the rec-shell brand banner using the
+# installer's local color/glyph palette. Mirrors `rec_banner` in lib/ui.sh —
+# kept inline so install.sh works standalone via `curl | bash` (lib/ui.sh
+# does not exist yet at this point in a fresh install).
+installer_banner() {
+  local _v="${1:-}" _hint="${2:-}"
+  if [ "$_ui_utf" = 1 ]; then
+    printf '%s   ┏━┓┏━╸┏━╸    ┏━╸╻ ╻┏━╸╻  ╻%s\n' "$C_C" "$C_0"
+    printf '%s   ┣┳┛┣╸ ┃      ┗━┓┣━┫┣╸ ┃  ┃%s\n' "$C_C" "$C_0"
+    printf '%s   ╹┗╸┗━╸┗━╸    ┗━┛╹ ╹┗━╸┗━╸┗━╸%s\n' "$C_C" "$C_0"
+  else
+    printf '%s   ___  ___  ___      ___ _  _ ___ _   _   %s\n' "$C_C" "$C_0"
+    printf '%s  | _ \| __|/ __|    / __| || | __| | | |  %s\n' "$C_C" "$C_0"
+    printf '%s  |   /| _|| (__     \__ \ __ | _|| |_| |_ %s\n' "$C_C" "$C_0"
+    printf '%s  |_|_\|___|\___|    |___/_||_|___|___|___|%s\n' "$C_C" "$C_0"
+  fi
+  printf '\n'
+  if [ -n "$_v" ]; then
+    if [ "$_ui_color" = 1 ]; then
+      printf '\033[2m   modern bash & zsh  %s  v%s\033[0m\n' "$G_ARROW" "$_v"
+    else
+      printf '   modern bash & zsh  %s  v%s\n' "$G_ARROW" "$_v"
+    fi
+  fi
+  if [ -n "$_hint" ]; then
+    if [ "$_ui_color" = 1 ]; then
+      printf '\033[2m   %s %s\033[0m\n' "$G_ARROW" "$_hint"
+    else
+      printf '   %s %s\n' "$G_ARROW" "$_hint"
+    fi
+  fi
+}
+
 # confirm PROMPT [yes|no] -> 0/1. Reads /dev/tty so it works under `curl | bash`
 # (where stdin is the pipe); returns the default when no terminal is attached.
 confirm() {
@@ -579,6 +612,8 @@ SHELL_BIN="${SHELL:-/bin/bash}"
 
 printf '\n'
 ok "rec-shell $VER installed."
+printf '\n'
+installer_banner "$VER" "rec doctor"
 printf '\n'
 printf '%sTo use rec-shell now%s in your current shell, run one of:\n' "$C_B" "$C_0"
 printf '  %ssource %s%s   %s# loads rec into this shell%s\n' "$C_C" "$RC_HINT" "$C_0" "$C_Y" "$C_0"
