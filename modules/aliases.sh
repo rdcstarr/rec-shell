@@ -31,9 +31,13 @@ alias ....='cd ../../..'
 alias mkdir='mkdir -pv'
 alias df='df -h'
 alias du='du -h'
-if [ "$REC_OS" = mac ]; then
+# Modern process monitor: prefer btop when installed; otherwise fall back to
+# the platform default (macOS top with CPU sort, or Linux htop->top chain).
+if rec_have btop; then
+  alias top='btop'
+elif [ "$REC_OS" = mac ]; then
   alias top='top -o cpu'
 else
-  alias free='free -h'
   alias top='htop 2>/dev/null || top'
 fi
+[ "$REC_OS" != mac ] && alias free='free -h'
