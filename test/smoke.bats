@@ -205,6 +205,36 @@ load_in() {
   [[ "$output" == *"FRESH"* ]]
 }
 
+# Regression: a user who ran `rec install` (or any lazy group) on a buggy
+# build kept the buggy dispatch function in RAM even after `rec update` —
+# only ssh/git/dispatch were dropped. reload must drop EVERY lazy group.
+@test "bash: rec reload drops all lazy command-group dispatchers" {
+  REC_SHELL_ARGS="--norc" load_in bash '
+    rec install help >/dev/null 2>&1
+    rec port help    >/dev/null 2>&1
+    rec ip help      >/dev/null 2>&1
+    rec whois help   >/dev/null 2>&1
+    rec dns help     >/dev/null 2>&1
+    rec backup help  >/dev/null 2>&1
+    rec sys help     >/dev/null 2>&1
+    rec systemd help >/dev/null 2>&1
+    rec tips help    >/dev/null 2>&1
+    rec cheat help   >/dev/null 2>&1
+    rec password --help >/dev/null 2>&1
+    rec reload >/dev/null 2>&1
+    for d in __rec_install_dispatch __rec_port_dispatch __rec_ip_dispatch \
+             __rec_whois_dispatch __rec_dns_dispatch __rec_backup_dispatch \
+             __rec_sys_dispatch __rec_systemd_dispatch __rec_tips_dispatch \
+             __rec_cheat_dispatch __rec_password_dispatch; do
+      command -v "$d" >/dev/null 2>&1 && echo "STALE:$d"
+    done
+    echo DONE'
+  [ "$status" -eq 0 ]
+  # No STALE: lines mean every dispatcher was cleared.
+  [[ "$output" != *"STALE:"* ]]
+  [[ "$output" == *"DONE"* ]]
+}
+
 @test "bash: rec install help dispatches via cli.sh" {
   REC_SHELL_ARGS="--norc" load_in bash 'rec install help'
   [ "$status" -eq 0 ]
