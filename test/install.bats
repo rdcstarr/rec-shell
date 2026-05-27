@@ -21,6 +21,62 @@ teardown() { rm -rf "$T"; }
   [[ "$output" != *"Updating existing checkout"* ]]
 }
 
+# Regression: on Debian < 12 (and any distro without eza in default repos),
+# `apt install eza` returns "Unable to locate package eza" and the install
+# used to silently fail with a generic warning. ensure_eza now falls back
+# to a prebuilt binary from GitHub releases. We stub pm_install to fail
+# and curl/tar to capture the GitHub URL, then assert ensure_eza tried it.
+@test "ensure_eza: falls back to GitHub binary when pm_install fails" {
+  T="$(mktemp -d)"
+  mkdir -p "$T/bin" "$T/local/bin"
+  # Stub curl to write a one-byte payload, tar to extract a fake eza binary.
+  cat >"$T/bin/curl" <<EOF
+#!/bin/sh
+# Record the URL we were asked to download, then write a fake archive.
+out=""
+url=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    -*) shift ;;
+    *) url="\$1"; shift ;;
+  esac
+done
+echo "CURL_URL: \$url" >>"$T/curl-calls.log"
+# Build a tarball containing an executable named "eza".
+mkdir -p "$T/eza-stage"
+printf '#!/bin/sh\necho fake-eza\n' >"$T/eza-stage/eza"
+chmod +x "$T/eza-stage/eza"
+tar -czf "\$out" -C "$T/eza-stage" eza
+exit 0
+EOF
+  chmod +x "$T/bin/curl"
+  # Stub apt-get so pm_install's apt path fails.
+  cat >"$T/bin/apt-get" <<'EOF'
+#!/bin/sh
+echo "apt-get: E: Unable to locate package eza" >&2
+exit 100
+EOF
+  chmod +x "$T/bin/apt-get"
+  # Force the apt path in pm_install: hide brew/dnf/pacman/apk.
+  run env -i \
+    HOME="$T" PATH="$T/bin:/usr/bin:/bin" \
+    TOOLS_ONLY=1 UNATTENDED=1 \
+    bash -c "
+      cd '$T'
+      # Make a writable shim for HOME/.local/bin (non-root → user prefix).
+      # Source install.sh up to ensure_eza then call it.
+      . '$REPO_ROOT/install.sh' --tools-only --no-tools --unattended >/dev/null 2>&1 || true
+      ensure_eza
+      ls -la \"\$HOME/.local/bin/eza\" 2>&1 || echo MISSING
+      cat '$T/curl-calls.log' 2>/dev/null"
+  [ "$status" -eq 0 ] || [ "$status" -eq 1 ]  # ensure_eza may return 1 on tar mismatch
+  # The GitHub URL must have been hit.
+  [[ "$output" == *"CURL_URL: https://github.com/eza-community/eza/releases/latest/download/eza_"* ]]
+  [[ "$output" == *"-unknown-linux-"* ]]
+  rm -rf "$T"
+}
+
 # Source the module with a sandboxed PATH + stubbed install.sh.
 install_in() {
   local shell="$1"

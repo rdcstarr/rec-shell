@@ -522,7 +522,93 @@ ensure_fzf() {
     || warn "fzf install script failed; binaries may be missing."
 }
 
-ensure_eza() { ensure_tool eza eza 'Install eza (modern ls replacement)?' eza; }
+# eza is NOT in Debian < 12, in older Ubuntu LTS, or in CentOS 7. When apt /
+# dnf / brew can't deliver it, fall back to the prebuilt binary from upstream
+# GitHub releases — cross-distro, no extra repos to add. On macOS without brew
+# the fallback path doesn't apply (eza upstream doesn't ship Darwin binaries),
+# so we surface a clear message.
+ensure_eza() {
+  tool_selected eza || return 0
+  if command -v eza >/dev/null 2>&1; then
+    log "eza already installed"
+    return 0
+  fi
+  if [ "$UNATTENDED" -eq 0 ]; then
+    confirm 'Install eza (modern ls replacement)?' no || {
+      warn "Skipping eza."
+      return 0
+    }
+  fi
+  log "Installing eza..."
+  # Fast path: package manager.
+  local _eza_err
+  _eza_err="$(mktemp 2>/dev/null || mktemp -t pm_install.XXXXXX)"
+  if pm_install eza 2>"$_eza_err"; then
+    rm -f "$_eza_err"
+    return 0
+  fi
+  # Fallback path: prebuilt binary from upstream releases. Only Linux has
+  # binaries; macOS users without brew need brew or `cargo install eza`.
+  case "$(uname -s)" in
+    Linux) ;;
+    Darwin)
+      warn "eza install failed. Install Homebrew (https://brew.sh) and retry, or run: cargo install eza"
+      [ -s "$_eza_err" ] && sed 's/^/  /' "$_eza_err" >&2
+      rm -f "$_eza_err"
+      return 1
+      ;;
+    *)
+      warn "eza install failed on $(uname -s); install it manually."
+      rm -f "$_eza_err"
+      return 1
+      ;;
+  esac
+  local _eza_arch _eza_suffix
+  _eza_arch="$(uname -m)"
+  case "$_eza_arch" in
+    x86_64 | amd64) _eza_suffix="x86_64-unknown-linux-musl" ;;
+    aarch64 | arm64) _eza_suffix="aarch64-unknown-linux-gnu" ;;
+    armv7* | armhf) _eza_suffix="arm-unknown-linux-gnueabihf" ;;
+    *)
+      warn "eza: no prebuilt binary for arch '$_eza_arch'; install it manually (e.g. cargo install eza)."
+      rm -f "$_eza_err"
+      return 1
+      ;;
+  esac
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "eza fallback needs 'curl'."
+    rm -f "$_eza_err"
+    return 1
+  fi
+  if ! command -v tar >/dev/null 2>&1; then
+    warn "eza fallback needs 'tar'."
+    rm -f "$_eza_err"
+    return 1
+  fi
+  local _eza_bindir=/usr/local/bin
+  [ "$(id -u)" -ne 0 ] && _eza_bindir="$HOME/.local/bin"
+  mkdir -p "$_eza_bindir"
+  local _eza_tmp _eza_url
+  _eza_tmp="$(mktemp -d)"
+  _eza_url="https://github.com/eza-community/eza/releases/latest/download/eza_${_eza_suffix}.tar.gz"
+  log "Package manager couldn't install eza; downloading prebuilt binary ($_eza_arch) from GitHub..."
+  if curl -fsSL "$_eza_url" -o "$_eza_tmp/eza.tar.gz" \
+    && tar -xzf "$_eza_tmp/eza.tar.gz" -C "$_eza_tmp" \
+    && [ -x "$_eza_tmp/eza" ] \
+    && mv "$_eza_tmp/eza" "$_eza_bindir/eza"; then
+    chmod +x "$_eza_bindir/eza"
+    log "eza installed to $_eza_bindir/eza"
+    rm -rf "$_eza_tmp" "$_eza_err"
+    return 0
+  fi
+  warn "eza install failed (package manager + GitHub fallback both errored)."
+  [ -s "$_eza_err" ] && {
+    warn "Package manager error:"
+    sed 's/^/  /' "$_eza_err" >&2
+  }
+  rm -rf "$_eza_tmp" "$_eza_err"
+  return 1
+}
 ensure_bat() { ensure_tool bat bat 'Install bat (modern cat with syntax highlighting)?' bat; }
 ensure_fd() { ensure_tool fd fd 'Install fd (modern find replacement)?' fd fd-find; }
 ensure_rg() { ensure_tool ripgrep rg 'Install ripgrep (fast modern grep)?' ripgrep; }
