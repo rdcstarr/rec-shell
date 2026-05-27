@@ -360,3 +360,128 @@ EOF
   grep -q 'FAKE_APT_ERROR' "$log"
   rm -rf "$T"
 }
+
+# OS-aware filtering for shell plugins: macOS users default to zsh, so the
+# bootstrap installer should never offer ble.sh on Darwin (its make build
+# requires gawk, which BSD awk on macOS isn't). zsh plugins remain on offer.
+#
+# NOTE on assertion style: bats only treats the FINAL `[[ ]]` exit code as
+# the test result — intermediate `[[ ]]` failures are silently ignored. We
+# therefore use `grep -qx` (single-bracket-friendly) for each line check so
+# every assertion contributes to test pass/fail.
+@test "tool_selected skips ble.sh on macOS (user mode)" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=mac MODE=user
+    if tool_selected ble.sh; then echo BLE_SELECTED; else echo BLE_SKIPPED; fi
+    if tool_selected zsh-autosuggestions; then echo ZSHAUTO_SELECTED; else echo ZSHAUTO_SKIPPED; fi
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx BLE_SKIPPED
+  printf '%s\n' "$output" | grep -qx ZSHAUTO_SELECTED
+}
+
+# Mirror on Linux: zsh plugins are filtered out (the default Linux user is on
+# bash); ble.sh remains on offer.
+@test "tool_selected skips zsh plugins on Linux (user mode)" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=linux MODE=user
+    if tool_selected zsh-autosuggestions; then echo ZSHAUTO_SELECTED; else echo ZSHAUTO_SKIPPED; fi
+    if tool_selected zsh-syntax-highlighting; then echo ZSHSYNTAX_SELECTED; else echo ZSHSYNTAX_SKIPPED; fi
+    if tool_selected ble.sh; then echo BLE_SELECTED; else echo BLE_SKIPPED; fi
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx ZSHAUTO_SKIPPED
+  printf '%s\n' "$output" | grep -qx ZSHSYNTAX_SKIPPED
+  printf '%s\n' "$output" | grep -qx BLE_SELECTED
+}
+
+# System installs serve multiple users on the same box, so the OS filter is
+# bypassed: every shell plugin is on offer regardless of host OS.
+@test "tool_selected bypasses OS filter in --system mode" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=mac MODE=system
+    if tool_selected ble.sh; then echo BLE_SELECTED; else echo BLE_SKIPPED; fi
+    if tool_selected zsh-autosuggestions; then echo ZSHAUTO_SELECTED; else echo ZSHAUTO_SKIPPED; fi
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx BLE_SELECTED
+  printf '%s\n' "$output" | grep -qx ZSHAUTO_SELECTED
+}
+
+# Regression: when ble.sh IS chosen (e.g. via `rec install ble.sh` on macOS,
+# or in --system mode) but gawk isn't on PATH, surface a clear, OS-specific
+# recommendation instead of letting `make` explode with the cryptic
+# `GNUmakefile:29: *** Sorry, gawk could not be found` message.
+# maybe_multiselect_tools is the new interactive checklist gate. It must
+# stay a no-op for every non-interactive path so automation (CI, scripts,
+# `rec install <name>` re-entry) keeps working unchanged.
+@test "maybe_multiselect_tools is a no-op under --unattended" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=mac MODE=user UNATTENDED=1 TARGET_DIR='$REPO_ROOT'
+    rec_ui_multiselect() { echo MULTISELECT_CALLED; }
+    maybe_multiselect_tools
+    echo TOOLS_ALLOW=[\$TOOLS_ALLOW]
+  "
+  [ "$status" -eq 0 ]
+  ! printf '%s\n' "$output" | grep -q MULTISELECT_CALLED
+  printf '%s\n' "$output" | grep -qx 'TOOLS_ALLOW=\[\]'
+}
+
+@test "maybe_multiselect_tools is a no-op when --tools=LIST is set" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=mac MODE=user TOOLS_ALLOW=fd TARGET_DIR='$REPO_ROOT'
+    rec_ui_multiselect() { echo MULTISELECT_CALLED; }
+    maybe_multiselect_tools
+    echo TOOLS_ALLOW=[\$TOOLS_ALLOW]
+  "
+  [ "$status" -eq 0 ]
+  ! printf '%s\n' "$output" | grep -q MULTISELECT_CALLED
+  # User's explicit --tools= must survive untouched.
+  printf '%s\n' "$output" | grep -qx 'TOOLS_ALLOW=\[fd\]'
+}
+
+@test "maybe_multiselect_tools is a no-op when --no-tools is set" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=mac MODE=user INSTALL_TOOLS=none TARGET_DIR='$REPO_ROOT'
+    rec_ui_multiselect() { echo MULTISELECT_CALLED; }
+    maybe_multiselect_tools
+  "
+  [ "$status" -eq 0 ]
+  ! printf '%s\n' "$output" | grep -q MULTISELECT_CALLED
+}
+
+@test "ensure_blesh emits actionable warning when gawk is missing on macOS" {
+  T="$(mktemp -d)"
+  mkdir -p "$T/bin"
+  # Stub make + git as present; deliberately do NOT provide gawk in the
+  # sandboxed PATH. We never reach make/git anyway because gawk check
+  # fires first.
+  printf '#!/bin/sh\nexit 0\n' >"$T/bin/make"
+  printf '#!/bin/sh\nexit 0\n' >"$T/bin/git"
+  chmod +x "$T/bin/make" "$T/bin/git"
+  run bash -c "
+    PATH='$T/bin:/usr/bin:/bin'
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=mac MODE=system UNATTENDED=1
+    ensure_blesh
+  "
+  # ensure_blesh returns 1 on gawk-missing, so don't assert status == 0.
+  # Assert the actionable hint surfaces in the merged stderr+stdout (`run`
+  # merges them).
+  printf '%s\n' "$output" | grep -q gawk
+  printf '%s\n' "$output" | grep -q 'brew install gawk'
+  rm -rf "$T"
+}

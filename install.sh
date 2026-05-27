@@ -383,9 +383,23 @@ ensure_zoxide() {
 
 # --- modern CLI tools ------------------------------------------------------
 # tool_selected NAME -> 0 if this tool should be installed in the current run.
+#
+# OS-aware filtering: macOS's default shell since Catalina is zsh and BSD awk
+# means ble.sh's `make` build fails for the common user; Linux distros are
+# bash-by-default and only a minority install zsh. So in --user mode we hide
+# the plugin set that doesn't match the host's default. Edge cases (Linux+zsh
+# user, macOS+bash user) remain reachable via `rec install <name>` after the
+# bootstrap, which is shell-aware (lib/cli-install.sh + lib/tools-catalog.sh).
+# --system installs skip this filter — they serve all users on the box.
 tool_selected() {
   local name="$1"
   [ "$INSTALL_TOOLS" = none ] && return 1
+  if [ "$MODE" != system ]; then
+    case "$OS:$name" in
+      mac:ble.sh) return 1 ;;
+      linux:zsh-autosuggestions | linux:zsh-syntax-highlighting) return 1 ;;
+    esac
+  fi
   # Allowlist: only members of TOOLS_ALLOW pass.
   if [ -n "$TOOLS_ALLOW" ]; then
     case ",$TOOLS_ALLOW," in
@@ -775,6 +789,20 @@ ensure_blesh() {
     warn "ble.sh install needs 'git'."
     return 1
   fi
+  # ble.sh's Makefile requires GNU Awk specifically — BSD awk on macOS and
+  # mawk (some Debian variants) both fail at GNUmakefile:29 with "Sorry, gawk
+  # could not be found". Surface an actionable, OS-specific install command
+  # rather than letting `make` explode with a cryptic message.
+  if ! command -v gawk >/dev/null 2>&1; then
+    warn "ble.sh requires gawk (GNU Awk) — BSD awk and mawk are rejected by its Makefile."
+    if [ "$OS" = mac ]; then
+      warn "  brew install gawk"
+    else
+      warn "  apt install gawk    # Debian/Ubuntu"
+      warn "  dnf install gawk    # Fedora/RHEL"
+    fi
+    return 1
+  fi
   local tmpdir
   tmpdir="$(mktemp -d)"
   if git clone --recursive --depth 1 --shallow-submodules \
@@ -809,10 +837,118 @@ install_tools_all() {
   ensure_blesh
 }
 
+# Replace the per-tool Y/N confirm() prompts with a single multiselect (the
+# same widget `rec install` uses, lib/ui-interactive.sh's rec_ui_multiselect).
+# Becomes available once clone_or_update has dropped lib/ui*.sh into the
+# checkout. No-op when:
+#   - --unattended or --no-tools or explicit --tools=/--without= override,
+#   - no TTY (curl | bash with no /dev/tty, CI, dumb terminals),
+#   - any required lib file is missing (partial clone, broken release).
+# Sets TOOLS_ALLOW to the user's picks; install_tools_all then runs each
+# ensure_* and tool_selected lets only the allowlisted ones through (existing
+# behavior — confirm() short-circuits when an allowlist is set).
+maybe_multiselect_tools() {
+  [ "$UNATTENDED" -eq 1 ] && return 0
+  [ "$INSTALL_TOOLS" = none ] && return 0
+  [ -n "$TOOLS_ALLOW" ] && return 0
+  [ -n "$TOOLS_DENY" ] && return 0
+  # `[ -e /dev/tty ]` isn't enough: in some sandboxed contexts (no controlling
+  # terminal, certain CI runners) /dev/tty exists in the filesystem but
+  # opening it errors "Device not configured". Probe via a real open via
+  # exec, and if it fails fall through silently to the per-tool flow.
+  local _tty_dev=/dev/tty
+  if ! (true <"$_tty_dev") 2>/dev/null; then
+    return 0
+  fi
+  [ -r "$TARGET_DIR/lib/core.sh" ] || return 0
+  [ -r "$TARGET_DIR/lib/ui.sh" ] || return 0
+  [ -r "$TARGET_DIR/lib/ui-interactive.sh" ] || return 0
+  [ -r "$TARGET_DIR/lib/tools-catalog.sh" ] || return 0
+
+  # rec_tools_missing filters by REC_SHELL_NAME (lib/tools-catalog.sh:111-122).
+  # Map OS to the shell whose plugins we want to OFFER, mirroring the same
+  # rule tool_selected enforces below:
+  #   mac   -> "zsh"  so ble.sh is filtered out, zsh-* are shown
+  #   linux -> "bash" so zsh-* are filtered out, ble.sh is shown
+  # In --system mode we want both plugin sets, so we skip the filter via a
+  # direct catalog walk.
+  case "$OS" in
+    mac) REC_SHELL_NAME=zsh ;;
+    linux) REC_SHELL_NAME=bash ;;
+    *) REC_SHELL_NAME=bash ;;
+  esac
+  REC_SHELL_DIR="$TARGET_DIR"
+  export REC_SHELL_NAME REC_SHELL_DIR
+
+  # core.sh defines rec_have, which tools-catalog.sh uses internally
+  # (lib/tools-catalog.sh:82 rec_have <bin> for presence detection).
+  # shellcheck disable=SC1090,SC1091
+  . "$TARGET_DIR/lib/core.sh" 2>/dev/null || return 0
+  # shellcheck disable=SC1090,SC1091
+  . "$TARGET_DIR/lib/ui.sh" 2>/dev/null || return 0
+  # shellcheck disable=SC1090,SC1091
+  . "$TARGET_DIR/lib/ui-interactive.sh" 2>/dev/null || return 0
+  # shellcheck disable=SC1090,SC1091
+  . "$TARGET_DIR/lib/tools-catalog.sh" 2>/dev/null || return 0
+
+  local _miss
+  if [ "$MODE" = system ]; then
+    # Both plugin sets in scope: catalog walk, skip already-present entries.
+    _miss="$(rec_tools_catalog | awk -F'|' 'NF { print $1 }' \
+      | while IFS= read -r _t; do
+          rec_tools_present "$_t" || printf '%s\n' "$_t"
+        done)"
+  else
+    _miss="$(rec_tools_missing | awk 'NF')"
+  fi
+  if [ -z "$_miss" ]; then
+    log 'All CLI tools already installed.'
+    INSTALL_TOOLS=none
+    return 0
+  fi
+
+  # Newline-split into positional args. Mirrors cli-install.sh:137-146 — zsh
+  # needs sh_word_split for unquoted expansion, but install.sh is bash, so
+  # the unquoted `set --` here is fine.
+  set --
+  local _oldIFS="$IFS"
+  IFS='
+'
+  # shellcheck disable=SC2086 # intentional word-split on newline
+  set -- $_miss
+  IFS="$_oldIFS"
+
+  # Under `curl -fsSL ... | bash`, stdin is the pipe and stderr is the
+  # user's terminal. rec_ui_multiselect (lib/ui-interactive.sh:241) refuses
+  # to draw unless both stdin AND stderr are TTYs (__rec_ui_interactive,
+  # lib/ui-interactive.sh:22-29). Probe with stdin redirected to /dev/tty
+  # before invoking — if the probe still fails, we fall through to the
+  # per-tool confirm() flow (confirm() reads from /dev/tty directly and
+  # works fine under curl|bash). Same `</dev/tty` redirect on the actual
+  # call so __rec_ui_readkey sees a real terminal.
+  if ! __rec_ui_interactive <"$_tty_dev" 2>/dev/null; then
+    return 0
+  fi
+  rec_ui_multiselect "Pick CLI tools to install (space=toggle, a=all, enter=confirm)" "$@" <"$_tty_dev" >/dev/null || return 0
+  if [ -z "${REC_UI_REPLY:-}" ]; then
+    INSTALL_TOOLS=none
+    log 'Nothing selected — skipping CLI tools.'
+    return 0
+  fi
+  TOOLS_ALLOW="$(printf '%s' "$REC_UI_REPLY" | tr ' ' ',' | sed 's/,$//')"
+  log "Selected: $TOOLS_ALLOW"
+}
+
 # --- run -------------------------------------------------------------------
+# Bats tests source this file to exercise its functions without executing the
+# installer; setting REC_INSTALL_SOURCED=1 before sourcing skips the run block
+# below. The default (unset) preserves normal `curl | bash` behavior.
+if [ "${REC_INSTALL_SOURCED:-0}" -ne 1 ]; then
+
 if [ "$TOOLS_ONLY" -eq 1 ]; then
   log "Installing/refreshing CLI tools only (--tools-only)"
   TARGET_DIR="${REC_SHELL_DIR:-$TARGET_DIR}"
+  maybe_multiselect_tools
   install_tools_all
   ok "tools install complete."
   exit 0
@@ -823,6 +959,7 @@ ensure_git
 clone_or_update
 install_loader_lines
 install_profile_d_dropin
+maybe_multiselect_tools
 ensure_omp
 ensure_zoxide
 install_tools_all
@@ -863,3 +1000,5 @@ printf '  %scurl -fsSL https://rec-shell.recwebnetwork.com/install.sh | %s && ex
 printf '\n'
 printf 'New shells started after this point will have %srec%s available automatically.\n' "$C_B" "$C_0"
 printf 'Then check it with: %srec doctor%s\n' "$C_B" "$C_0"
+
+fi # REC_INSTALL_SOURCED guard
