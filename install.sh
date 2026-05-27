@@ -612,7 +612,100 @@ ensure_eza() {
 ensure_bat() { ensure_tool bat bat 'Install bat (modern cat with syntax highlighting)?' bat; }
 ensure_fd() { ensure_tool fd fd 'Install fd (modern find replacement)?' fd fd-find; }
 ensure_rg() { ensure_tool ripgrep rg 'Install ripgrep (fast modern grep)?' ripgrep; }
-ensure_btop() { ensure_tool btop btop 'Install btop (interactive system monitor)?' btop; }
+# btop isn't in Debian < 12, in older Ubuntu LTS, or in CentOS 7. Same
+# fallback pattern as ensure_eza: try the package manager first; on Linux,
+# fall back to upstream's prebuilt static binary from GitHub releases. The
+# btop release tarball is .tbz (bzip2) with a `btop/bin/btop` layout plus a
+# `themes/` directory we copy alongside it when present.
+ensure_btop() {
+  tool_selected btop || return 0
+  if command -v btop >/dev/null 2>&1; then
+    log "btop already installed"
+    return 0
+  fi
+  if [ "$UNATTENDED" -eq 0 ]; then
+    confirm 'Install btop (interactive system monitor)?' no || {
+      warn "Skipping btop."
+      return 0
+    }
+  fi
+  log "Installing btop..."
+  local _btop_err
+  _btop_err="$(mktemp 2>/dev/null || mktemp -t pm_install.XXXXXX)"
+  if pm_install btop 2>"$_btop_err"; then
+    rm -f "$_btop_err"
+    return 0
+  fi
+  case "$(uname -s)" in
+    Linux) ;;
+    Darwin)
+      warn "btop install failed. Install Homebrew (https://brew.sh) and retry, or build from source."
+      [ -s "$_btop_err" ] && sed 's/^/  /' "$_btop_err" >&2
+      rm -f "$_btop_err"
+      return 1
+      ;;
+    *)
+      warn "btop install failed on $(uname -s); install it manually."
+      rm -f "$_btop_err"
+      return 1
+      ;;
+  esac
+  local _btop_arch _btop_suffix
+  _btop_arch="$(uname -m)"
+  case "$_btop_arch" in
+    x86_64 | amd64) _btop_suffix="x86_64-linux-musl" ;;
+    aarch64 | arm64) _btop_suffix="aarch64-linux-musl" ;;
+    armv7* | armhf) _btop_suffix="arm-linux-musleabihf" ;;
+    *)
+      warn "btop: no prebuilt binary for arch '$_btop_arch'; install it manually."
+      rm -f "$_btop_err"
+      return 1
+      ;;
+  esac
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "btop fallback needs 'curl'."
+    rm -f "$_btop_err"
+    return 1
+  fi
+  if ! command -v tar >/dev/null 2>&1; then
+    warn "btop fallback needs 'tar' (with bzip2 support)."
+    rm -f "$_btop_err"
+    return 1
+  fi
+  local _btop_bindir _btop_sharedir
+  if [ "$(id -u)" -eq 0 ]; then
+    _btop_bindir=/usr/local/bin
+    _btop_sharedir=/usr/local/share/btop
+  else
+    _btop_bindir="$HOME/.local/bin"
+    _btop_sharedir="$HOME/.config/btop"
+  fi
+  mkdir -p "$_btop_bindir" "$_btop_sharedir"
+  local _btop_tmp _btop_url
+  _btop_tmp="$(mktemp -d)"
+  _btop_url="https://github.com/aristocratos/btop/releases/latest/download/btop-${_btop_suffix}.tbz"
+  log "Package manager couldn't install btop; downloading prebuilt binary ($_btop_arch) from GitHub..."
+  if curl -fsSL "$_btop_url" -o "$_btop_tmp/btop.tbz" \
+    && tar -xjf "$_btop_tmp/btop.tbz" -C "$_btop_tmp" \
+    && [ -x "$_btop_tmp/btop/bin/btop" ] \
+    && mv "$_btop_tmp/btop/bin/btop" "$_btop_bindir/btop"; then
+    chmod +x "$_btop_bindir/btop"
+    # Themes are nice-to-have; ignore errors if the share dir isn't writable.
+    [ -d "$_btop_tmp/btop/themes" ] \
+      && cp -r "$_btop_tmp/btop/themes" "$_btop_sharedir/" 2>/dev/null \
+      || true
+    log "btop installed to $_btop_bindir/btop"
+    rm -rf "$_btop_tmp" "$_btop_err"
+    return 0
+  fi
+  warn "btop install failed (package manager + GitHub fallback both errored)."
+  [ -s "$_btop_err" ] && {
+    warn "Package manager error:"
+    sed 's/^/  /' "$_btop_err" >&2
+  }
+  rm -rf "$_btop_tmp" "$_btop_err"
+  return 1
+}
 ensure_ncdu() { ensure_tool ncdu ncdu 'Install ncdu (interactive disk usage)?' ncdu; }
 # `whois` is the same package name across brew/apt/dnf/pacman/apk.
 ensure_whois() { ensure_tool whois whois 'Install whois (registrar / IP lookups)?' whois; }

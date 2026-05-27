@@ -100,6 +100,68 @@ EOF
   rm -rf "$T"
 }
 
+# Same fallback pattern as eza but for btop, whose release archive is .tbz
+# (bzip2) with a `btop/bin/btop` layout and an adjacent themes/ directory.
+# btop isn't in Debian < 12 main repos so this matters on bullseye and
+# older Ubuntu LTS.
+@test "ensure_btop: falls back to GitHub binary when pm_install fails" {
+  T="$(mktemp -d)"
+  mkdir -p "$T/bin"
+  # curl stub: capture URL + emit a .tbz with the upstream layout.
+  cat >"$T/bin/curl" <<EOF
+#!/bin/sh
+out=""; url=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    -*) shift ;;
+    *) url="\$1"; shift ;;
+  esac
+done
+echo "\$url" >>"$T/curl-calls.log"
+mkdir -p "$T/stage/btop/bin" "$T/stage/btop/themes"
+printf '%s\n%s\n' '#!/bin/sh' 'echo fake-btop' >"$T/stage/btop/bin/btop"
+chmod +x "$T/stage/btop/bin/btop"
+echo "fake" >"$T/stage/btop/themes/sample.theme"
+tar -cjf "\$out" -C "$T/stage" btop
+EOF
+  chmod +x "$T/bin/curl"
+  cat >"$T/bin/apt-get" <<'EOF'
+#!/bin/sh
+echo "apt-get: E: Unable to locate package btop" >&2
+exit 100
+EOF
+  chmod +x "$T/bin/apt-get"
+  cat >"$T/bin/sudo" <<'EOF'
+#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in -*) shift ;; *) break ;; esac
+done
+exec "$@"
+EOF
+  chmod +x "$T/bin/sudo"
+  cat >"$T/bin/uname" <<'EOF'
+#!/bin/sh
+case "$1" in
+  -s) echo Linux ;;
+  -m) echo x86_64 ;;
+  *)  /usr/bin/uname "$@" 2>/dev/null || echo Linux ;;
+esac
+EOF
+  chmod +x "$T/bin/uname"
+  run env -i \
+    HOME="$T" PATH="$T/bin:/usr/bin:/bin" \
+    bash "$REPO_ROOT/install.sh" --tools-only --tools=btop --unattended
+  [ -r "$T/curl-calls.log" ]
+  grep -q '^https://github.com/aristocratos/btop/releases/latest/download/btop-' "$T/curl-calls.log"
+  grep -q -- 'x86_64-linux-musl' "$T/curl-calls.log"
+  # The fake btop landed under $HOME/.local/bin (non-root path).
+  [ -x "$T/.local/bin/btop" ]
+  # Themes copied into $HOME/.config/btop/themes/.
+  [ -r "$T/.config/btop/themes/sample.theme" ]
+  rm -rf "$T"
+}
+
 # Source the module with a sandboxed PATH + stubbed install.sh.
 install_in() {
   local shell="$1"
