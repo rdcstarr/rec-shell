@@ -691,9 +691,9 @@ ensure_btop() {
     && mv "$_btop_tmp/btop/bin/btop" "$_btop_bindir/btop"; then
     chmod +x "$_btop_bindir/btop"
     # Themes are nice-to-have; ignore errors if the share dir isn't writable.
-    [ -d "$_btop_tmp/btop/themes" ] \
-      && cp -r "$_btop_tmp/btop/themes" "$_btop_sharedir/" 2>/dev/null \
-      || true
+    if [ -d "$_btop_tmp/btop/themes" ]; then
+      cp -r "$_btop_tmp/btop/themes" "$_btop_sharedir/" 2>/dev/null || :
+    fi
     log "btop installed to $_btop_bindir/btop"
     rm -rf "$_btop_tmp" "$_btop_err"
     return 0
