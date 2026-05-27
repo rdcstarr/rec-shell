@@ -3,9 +3,10 @@
 # lib/cli-ip.sh — the `rec ip` command group. Quick public + local IP lookup
 # with no setup. Lazy-loaded by lib/cli.sh on the first `rec ip ...`.
 #
-#   rec ip        public IP via HTTPS (3 providers tried in order)
-#   rec ip local  primary outbound IPv4 of this host
-#   rec ip all    all interfaces with addresses
+#   rec ip         public IP via HTTPS (3 providers tried in order)
+#   rec ip local   primary outbound IPv4 of this host
+#   rec ip all     all interfaces with addresses
+#   rec ip client  IP the SSH server sees you connecting from
 
 __rec_ip_dispatch() {
   _ri_cmd="${1:-public}"
@@ -14,6 +15,7 @@ __rec_ip_dispatch() {
     public) __rec_ip_public "$@" ;;
     local) __rec_ip_local "$@" ;;
     all) __rec_ip_all "$@" ;;
+    client) __rec_ip_client "$@" ;;
     help | --help | -h) __rec_ip_help ;;
     *)
       rec_ui_err "rec ip: unknown command \"$_ri_cmd\""
@@ -34,11 +36,14 @@ Commands:
   (none) / public   Public IP via HTTPS (tries ifconfig.co, ipify, ipinfo).
   local             Primary outbound IPv4 of this host.
   all               All network interfaces with their IPv4 addresses.
+  client            IP the SSH server sees you connecting from
+                    (reads SSH_CONNECTION / SSH_CLIENT; only works in an SSH session).
 
 Examples:
   rec ip
   rec ip local
   rec ip all
+  rec ip client
 EOF
 }
 
@@ -112,6 +117,29 @@ __rec_ip_local() {
     return 1
   fi
   printf '%s\n' "$ip"
+}
+
+__rec_ip_client() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -h | --help)
+        printf 'Usage: rec ip client\n'
+        return 0
+        ;;
+      *)
+        rec_ui_err "rec ip client: unexpected arg '$arg'"
+        return 2
+        ;;
+    esac
+  done
+  local src="$SSH_CONNECTION"
+  [ -z "$src" ] && src="$SSH_CLIENT"
+  if [ -z "$src" ]; then
+    rec_ui_err "not in an SSH session — use 'rec ip public' for your public IP"
+    return 1
+  fi
+  printf '%s\n' "${src%% *}"
 }
 
 __rec_ip_all() {

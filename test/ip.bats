@@ -75,10 +75,34 @@ EOF
 @test "bash: help is non-empty and lists subcommands" {
   ip_in bash mac '__rec_ip_help'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"public"* && "$output" == *"local"* && "$output" == *"all"* ]]
+  [[ "$output" == *"public"* && "$output" == *"local"* && "$output" == *"all"* && "$output" == *"client"* ]]
 }
 
 @test "bash: unknown subcommand returns 2" {
   ip_in bash mac '__rec_ip_dispatch bogus'
   [ "$status" -eq 2 ]
+}
+
+@test "bash: client IP read from SSH_CONNECTION" {
+  ip_in bash linux 'SSH_CONNECTION="198.51.100.7 54321 10.0.0.1 22" SSH_CLIENT="" __rec_ip_client'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"198.51.100.7"* ]]
+}
+
+@test "bash: client IP falls back to SSH_CLIENT when SSH_CONNECTION unset" {
+  ip_in bash linux 'unset SSH_CONNECTION; SSH_CLIENT="203.0.113.42 33333 22" __rec_ip_client'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"203.0.113.42"* ]]
+}
+
+@test "bash: client errors when not in an SSH session" {
+  ip_in bash linux 'unset SSH_CONNECTION SSH_CLIENT; __rec_ip_client'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"SSH"* ]]
+}
+
+@test "bash: dispatch routes 'client' to __rec_ip_client" {
+  ip_in bash linux 'SSH_CONNECTION="192.0.2.5 1 2 3" SSH_CLIENT="" __rec_ip_dispatch client'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"192.0.2.5"* ]]
 }
