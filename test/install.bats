@@ -24,17 +24,25 @@ teardown() { rm -rf "$T"; }
 # Regression: on Debian < 12 (and any distro without eza in default repos),
 # `apt install eza` returns "Unable to locate package eza" and the install
 # used to silently fail with a generic warning. ensure_eza now falls back
-# to a prebuilt binary from GitHub releases. We stub pm_install to fail
-# and curl/tar to capture the GitHub URL, then assert ensure_eza tried it.
+# to a prebuilt binary from GitHub releases.
+#
+# Strategy:
+#   - run install.sh as a SCRIPT (not source) so its `exit 0` doesn't kill
+#     the parent and so install_tools_all reaches ensure_eza naturally
+#   - stub apt-get (returns "Unable to locate package")
+#   - stub sudo to pass through, since pm_install uses `sudo -n apt-get` and
+#     real sudo's secure_path would bypass our stubs
+#   - stub uname so the test works on both Linux CI and macOS dev box
+#   - stub curl + tar to capture the URL and produce a fake eza tarball
+#   - assert via grep on the curl log (NOT bash `[[ ]]`), so the test works
+#     identically on bash 3.2 (macOS) and bash 5.x (Ubuntu CI)
 @test "ensure_eza: falls back to GitHub binary when pm_install fails" {
   T="$(mktemp -d)"
-  mkdir -p "$T/bin" "$T/local/bin"
-  # Stub curl to write a one-byte payload, tar to extract a fake eza binary.
+  mkdir -p "$T/bin"
+  # Stub curl: capture URL + emit a tarball containing an executable "eza".
   cat >"$T/bin/curl" <<EOF
 #!/bin/sh
-# Record the URL we were asked to download, then write a fake archive.
-out=""
-url=""
+out=""; url=""
 while [ \$# -gt 0 ]; do
   case "\$1" in
     -o) out="\$2"; shift 2 ;;
@@ -42,38 +50,53 @@ while [ \$# -gt 0 ]; do
     *) url="\$1"; shift ;;
   esac
 done
-echo "CURL_URL: \$url" >>"$T/curl-calls.log"
-# Build a tarball containing an executable named "eza".
+echo "\$url" >>"$T/curl-calls.log"
 mkdir -p "$T/eza-stage"
-printf '#!/bin/sh\necho fake-eza\n' >"$T/eza-stage/eza"
+printf '%s\n%s\n' '#!/bin/sh' 'echo fake-eza' >"$T/eza-stage/eza"
 chmod +x "$T/eza-stage/eza"
 tar -czf "\$out" -C "$T/eza-stage" eza
-exit 0
 EOF
   chmod +x "$T/bin/curl"
-  # Stub apt-get so pm_install's apt path fails.
+  # Stub apt-get (fails — simulates "package not in repos").
   cat >"$T/bin/apt-get" <<'EOF'
 #!/bin/sh
 echo "apt-get: E: Unable to locate package eza" >&2
 exit 100
 EOF
   chmod +x "$T/bin/apt-get"
-  # Force the apt path in pm_install: hide brew/dnf/pacman/apk.
+  # Stub sudo: strip flags then exec — keeps our PATH (real sudo resets it
+  # via secure_path and would bypass our apt-get stub on Ubuntu CI).
+  cat >"$T/bin/sudo" <<'EOF'
+#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in -*) shift ;; *) break ;; esac
+done
+exec "$@"
+EOF
+  chmod +x "$T/bin/sudo"
+  # Stub uname so the Linux fallback branch runs even on macOS (eza upstream
+  # doesn't ship Darwin binaries, so the production code skips fallback there;
+  # the test wants to exercise the Linux path regardless of host).
+  cat >"$T/bin/uname" <<'EOF'
+#!/bin/sh
+case "$1" in
+  -s) echo Linux ;;
+  -m) echo x86_64 ;;
+  *)  /usr/bin/uname "$@" 2>/dev/null || echo Linux ;;
+esac
+EOF
+  chmod +x "$T/bin/uname"
+  # Run install.sh as a script (not source). --tools=eza scopes work to
+  # ensure_eza; all other ensure_X functions short-circuit via tool_selected.
   run env -i \
     HOME="$T" PATH="$T/bin:/usr/bin:/bin" \
-    TOOLS_ONLY=1 UNATTENDED=1 \
-    bash -c "
-      cd '$T'
-      # Make a writable shim for HOME/.local/bin (non-root → user prefix).
-      # Source install.sh up to ensure_eza then call it.
-      . '$REPO_ROOT/install.sh' --tools-only --no-tools --unattended >/dev/null 2>&1 || true
-      ensure_eza
-      ls -la \"\$HOME/.local/bin/eza\" 2>&1 || echo MISSING
-      cat '$T/curl-calls.log' 2>/dev/null"
-  [ "$status" -eq 0 ] || [ "$status" -eq 1 ]  # ensure_eza may return 1 on tar mismatch
-  # The GitHub URL must have been hit.
-  [[ "$output" == *"CURL_URL: https://github.com/eza-community/eza/releases/latest/download/eza_"* ]]
-  [[ "$output" == *"-unknown-linux-"* ]]
+    bash "$REPO_ROOT/install.sh" --tools-only --tools=eza --unattended
+  # curl was hit with a GitHub release URL targeting an x86_64 Linux build.
+  [ -r "$T/curl-calls.log" ]
+  grep -q '^https://github.com/eza-community/eza/releases/latest/download/eza_' "$T/curl-calls.log"
+  grep -q -- 'x86_64-unknown-linux' "$T/curl-calls.log"
+  # The fake eza landed under $HOME/.local/bin (non-root path).
+  [ -x "$T/.local/bin/eza" ]
   rm -rf "$T"
 }
 
