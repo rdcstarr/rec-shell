@@ -6,7 +6,7 @@
 #   rec ip         public IP via HTTPS (3 providers tried in order)
 #   rec ip local   primary outbound IPv4 of this host
 #   rec ip all     all interfaces with addresses
-#   rec ip client  IP the SSH server sees you connecting from
+#   rec ip client  client IP: SSH_CONNECTION when in SSH, else the local outbound IP
 
 __rec_ip_dispatch() {
   _ri_cmd="${1:-public}"
@@ -36,8 +36,8 @@ Commands:
   (none) / public   Public IP via HTTPS (tries ifconfig.co, ipify, ipinfo).
   local             Primary outbound IPv4 of this host.
   all               All network interfaces with their IPv4 addresses.
-  client            IP the SSH server sees you connecting from
-                    (reads SSH_CONNECTION / SSH_CLIENT; only works in an SSH session).
+  client            Client-side IP: SSH_CONNECTION/SSH_CLIENT when in an SSH session,
+                    otherwise the local outbound IPv4 (same as `rec ip local`).
 
 Examples:
   rec ip
@@ -135,11 +135,11 @@ __rec_ip_client() {
   done
   local src="$SSH_CONNECTION"
   [ -z "$src" ] && src="$SSH_CLIENT"
-  if [ -z "$src" ]; then
-    rec_ui_err "not in an SSH session — use 'rec ip public' for your public IP"
-    return 1
+  if [ -n "$src" ]; then
+    printf '%s\n' "${src%% *}"
+    return 0
   fi
-  printf '%s\n' "${src%% *}"
+  __rec_ip_local
 }
 
 __rec_ip_all() {

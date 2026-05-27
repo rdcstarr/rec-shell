@@ -95,10 +95,18 @@ EOF
   [[ "$output" == *"203.0.113.42"* ]]
 }
 
-@test "bash: client errors when not in an SSH session" {
+@test "bash: client falls back to local IP when not in an SSH session" {
+  cat >"$T/bin/ip" <<'EOF'
+#!/bin/sh
+case "$*" in
+  "route get 1.1.1.1") printf "1.1.1.1 via 192.168.1.1 dev eth0 src 192.168.1.99 uid 1000\n" ;;
+  *) printf "" ;;
+esac
+EOF
+  chmod +x "$T/bin/ip"
   ip_in bash linux 'unset SSH_CONNECTION SSH_CLIENT; __rec_ip_client'
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"SSH"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"192.168.1.99"* ]]
 }
 
 @test "bash: dispatch routes 'client' to __rec_ip_client" {
