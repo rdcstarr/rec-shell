@@ -119,11 +119,12 @@ while [ \$# -gt 0 ]; do
   esac
 done
 echo "\$url" >>"$T/curl-calls.log"
+# btop release archives are .tar.gz (gzip), not .tbz — match upstream.
 mkdir -p "$T/stage/btop/bin" "$T/stage/btop/themes"
 printf '%s\n%s\n' '#!/bin/sh' 'echo fake-btop' >"$T/stage/btop/bin/btop"
 chmod +x "$T/stage/btop/bin/btop"
 echo "fake" >"$T/stage/btop/themes/sample.theme"
-tar -cjf "\$out" -C "$T/stage" btop
+tar -czf "\$out" -C "$T/stage" btop
 EOF
   chmod +x "$T/bin/curl"
   cat >"$T/bin/apt-get" <<'EOF'
@@ -153,8 +154,9 @@ EOF
     HOME="$T" PATH="$T/bin:/usr/bin:/bin" \
     bash "$REPO_ROOT/install.sh" --tools-only --tools=btop --unattended
   [ -r "$T/curl-calls.log" ]
-  grep -q '^https://github.com/aristocratos/btop/releases/latest/download/btop-' "$T/curl-calls.log"
-  grep -q -- 'x86_64-linux-musl' "$T/curl-calls.log"
+  # Assert the EXACT URL pattern verified against the GitHub releases API:
+  # `btop-<arch>-unknown-linux-musl.tar.gz` (not `.tbz`, not without `-unknown-`).
+  grep -qE '^https://github\.com/aristocratos/btop/releases/latest/download/btop-x86_64-unknown-linux-musl\.tar\.gz$' "$T/curl-calls.log"
   # The fake btop landed under $HOME/.local/bin (non-root path).
   [ -x "$T/.local/bin/btop" ]
   # Themes copied into $HOME/.config/btop/themes/.

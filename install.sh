@@ -650,12 +650,16 @@ ensure_btop() {
       return 1
       ;;
   esac
+  # Asset naming on btop releases follows Rust target-triple convention with
+  # an `-unknown-` segment, and the archive is .tar.gz (older releases used
+  # .tbz). Verified against the GitHub releases API at the time of writing.
   local _btop_arch _btop_suffix
   _btop_arch="$(uname -m)"
   case "$_btop_arch" in
-    x86_64 | amd64) _btop_suffix="x86_64-linux-musl" ;;
-    aarch64 | arm64) _btop_suffix="aarch64-linux-musl" ;;
-    armv7* | armhf) _btop_suffix="arm-linux-musleabihf" ;;
+    x86_64 | amd64) _btop_suffix="x86_64-unknown-linux-musl" ;;
+    aarch64 | arm64) _btop_suffix="aarch64-unknown-linux-musl" ;;
+    armv7* | armhf) _btop_suffix="armv7-unknown-linux-musleabi" ;;
+    armv6*) _btop_suffix="arm-unknown-linux-musleabi" ;;
     *)
       warn "btop: no prebuilt binary for arch '$_btop_arch'; install it manually."
       rm -f "$_btop_err"
@@ -668,7 +672,7 @@ ensure_btop() {
     return 1
   fi
   if ! command -v tar >/dev/null 2>&1; then
-    warn "btop fallback needs 'tar' (with bzip2 support)."
+    warn "btop fallback needs 'tar'."
     rm -f "$_btop_err"
     return 1
   fi
@@ -683,10 +687,10 @@ ensure_btop() {
   mkdir -p "$_btop_bindir" "$_btop_sharedir"
   local _btop_tmp _btop_url
   _btop_tmp="$(mktemp -d)"
-  _btop_url="https://github.com/aristocratos/btop/releases/latest/download/btop-${_btop_suffix}.tbz"
+  _btop_url="https://github.com/aristocratos/btop/releases/latest/download/btop-${_btop_suffix}.tar.gz"
   log "Package manager couldn't install btop; downloading prebuilt binary ($_btop_arch) from GitHub..."
-  if curl -fsSL "$_btop_url" -o "$_btop_tmp/btop.tbz" \
-    && tar -xjf "$_btop_tmp/btop.tbz" -C "$_btop_tmp" \
+  if curl -fsSL "$_btop_url" -o "$_btop_tmp/btop.tar.gz" \
+    && tar -xzf "$_btop_tmp/btop.tar.gz" -C "$_btop_tmp" \
     && [ -x "$_btop_tmp/btop/bin/btop" ] \
     && mv "$_btop_tmp/btop/bin/btop" "$_btop_bindir/btop"; then
     chmod +x "$_btop_bindir/btop"
