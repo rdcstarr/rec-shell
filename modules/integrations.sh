@@ -120,10 +120,16 @@ case "$REC_SHELL_NAME" in
     # ble.sh's recommended bootstrap is two-phase: source with --noattach so
     # it just defines its functions (bleopt, ble-bind, …), then call
     # ble-attach AFTER any module that touches PS1/PROMPT_COMMAND has run.
-    # Sourcing without --noattach has been observed to print
-    # "bleopt: command not found" on Debian when ble.sh's eager init races
-    # the surrounding shell setup.
+    #
+    # Pre-define a no-op `bleopt` BEFORE sourcing ble.sh. ble.sh's source
+    # overwrites it with the real function at the appropriate line. The
+    # stub absorbs any premature `bleopt` calls that happen during the
+    # source/attach interleave with oh-my-posh's PROMPT_COMMAND wiring —
+    # those used to surface as `bash: bleopt: command not found` at every
+    # interactive shell startup. The stub is harmless: by the time anything
+    # important calls bleopt, ble.sh has redefined it.
     if [ -r "$HOME/.local/share/blesh/ble.sh" ]; then
+      bleopt() { :; }
       . "$HOME/.local/share/blesh/ble.sh" --noattach
       if [ -n "${BLE_VERSION:-}" ]; then
         PROMPT_COMMAND="ble-attach${PROMPT_COMMAND:+; $PROMPT_COMMAND}"

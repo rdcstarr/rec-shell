@@ -311,6 +311,16 @@ __rec_ui_multiselect_tui() {
     _rui_marks="$_rui_marks$_rui_idx "
     _rui_idx=$((_rui_idx + 1))
   done
+  # Put the terminal in non-canonical no-echo mode for the whole picker
+  # session. Without this, the moment between draw-frame and the next
+  # readkey leaves the tty in cooked mode — any keystrokes the user typed
+  # before our read syscall starts get echoed to the screen verbatim
+  # (visible as random "a"/"s" characters mid-picker) AND get processed by
+  # the line discipline rather than us. Restore stty + cursor on every exit
+  # path (normal exit, Ctrl-C, terminal disconnect).
+  _rui_stty_saved=$(stty -g 2>/dev/null) || _rui_stty_saved=""
+  [ -n "$_rui_stty_saved" ] && stty -icanon -echo 2>/dev/null
+  trap '[ -n "$_rui_stty_saved" ] && stty "$_rui_stty_saved" 2>/dev/null; printf "\033[?25h" >&2' EXIT INT TERM HUP
   {
     __rec_ui_emit 1 "$REC_UI_S_CYAN" "$REC_UI_G_TL"
     printf ' %s' "$_rui_prompt"
@@ -365,12 +375,16 @@ __rec_ui_multiselect_tui() {
         enter) break ;;
         esc | q)
           printf '\033[?25h'
+          [ -n "$_rui_stty_saved" ] && stty "$_rui_stty_saved" 2>/dev/null
+          trap - EXIT INT TERM HUP
           return 130
           ;;
       esac
     done
     printf '\033[?25h'
   } >&2
+  [ -n "$_rui_stty_saved" ] && stty "$_rui_stty_saved" 2>/dev/null
+  trap - EXIT INT TERM HUP
   _rui_idx=1
   for _rui_opt in "$@"; do
     case "$_rui_marks" in
