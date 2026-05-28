@@ -27,7 +27,7 @@ with no way to learn that a newer version existed. `rec-shell` replaces that:
 Per user (no root):
 
 ```sh
-curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | bash
+curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | bash && exec $SHELL -l
 ```
 
 System-wide for every user on a server (adds the loader to `/etc` rc files
@@ -35,21 +35,14 @@ plus a `/etc/profile.d/rec-shell.sh` drop-in so all future login shells pick
 it up automatically):
 
 ```sh
-curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | sudo bash -s -- --system
-```
-
-The install runs in a subshell, so it can't add `rec` to your *current*
-interactive shell — that's a Unix process-model thing, not a bug. To use
-`rec` immediately, either start a fresh login shell (`exec $SHELL -l`) or
-chain it into the install command so it happens automatically:
-
-```sh
-# per-user
-curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | bash && exec $SHELL -l
-
-# system-wide
 curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | sudo bash -s -- --system && exec $SHELL -l
 ```
+
+The trailing `&& exec $SHELL -l` reloads your current shell so `rec` is
+available immediately — without it, the install still works but `rec`
+only shows up in future shells (the installer runs in a subshell and can't
+re-source your interactive one). Drop the suffix if you'd rather not
+restart your shell.
 
 Then run `rec doctor`.
 
