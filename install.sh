@@ -926,10 +926,14 @@ __rec_install_quietly() {
   _riq_logdir="${REC_CACHE_DIR:-${HOME}/.cache/rec-shell}/install-logs"
   command mkdir -p "$_riq_logdir" 2>/dev/null || true
   _riq_logfile="$_riq_logdir/$_riq_tool.log"
-  # rec_ui_spin lives in lib/ui-interactive.sh. install.sh is normally
-  # standalone, but after clone_or_update the lib is on disk — try to
-  # source it on demand. If unavailable, the fallback path still works.
+  # rec_ui_spin lives in lib/ui-interactive.sh and emits its final ✓/✗
+  # via rec_ui_ok / rec_ui_err from lib/ui.sh. install.sh is normally
+  # standalone, but after clone_or_update both libs are on disk — try
+  # to source them on demand (ui.sh first because ui-interactive.sh
+  # depends on it). If anything's missing the fallback path still works.
   if ! command -v rec_ui_spin >/dev/null 2>&1; then
+    [ -r "$TARGET_DIR/lib/ui.sh" ] \
+      && . "$TARGET_DIR/lib/ui.sh" 2>/dev/null || true
     [ -r "$TARGET_DIR/lib/ui-interactive.sh" ] \
       && . "$TARGET_DIR/lib/ui-interactive.sh" 2>/dev/null || true
   fi
