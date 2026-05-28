@@ -643,11 +643,12 @@ EOF
     pm_install() { return 1; }
     ensure_blesh
   "
-  # ensure_blesh returns 1 on gawk-missing, so don't assert status == 0.
+  # ensure_blesh returns 1 on dep-missing, so don't assert status == 0.
   # Assert the actionable hint surfaces in the merged stderr+stdout (`run`
-  # merges them).
+  # merges them). v1.9.0 changed the warning to mention all three deps
+  # (make/git/gawk) together since the loop installs all of them.
   printf '%s\n' "$output" | grep -q gawk
-  printf '%s\n' "$output" | grep -q 'brew install gawk'
+  printf '%s\n' "$output" | grep -q 'brew install'
   rm -rf "$T"
 }
 
@@ -688,6 +689,123 @@ EOF
 # multiselect probe in maybe_multiselect_tools rejects an empty TERM, so
 # the picker never renders and users get one y/N prompt per tool instead.
 # __rec_default_term gives us a sensible default to plug back in.
+# Regression: oh-my-posh's official installer requires `unzip`, but on a
+# fresh Ubuntu/Debian box unzip isn't installed by default. ensure_omp
+# used to abort with "unzip is required to install Oh My Posh." — we
+# auto-install it the same way we auto-install gawk for ble.sh.
+@test "ensure_omp: auto-installs unzip via pm_install when missing" {
+  T="$(mktemp -d)"
+  mkdir -p "$T/bin"
+  # Stub curl so the oh-my-posh installer pipeline doesn't hit the network.
+  printf '#!/bin/sh\necho CURL_CALLED\nexit 0\n' >"$T/bin/curl"
+  chmod +x "$T/bin/curl"
+  run bash -c "
+    PATH='$T/bin:/usr/bin:/bin'
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=linux MODE=system UNATTENDED=1 INSTALL_OMP=yes
+    # On Linux CI/dev boxes /usr/bin/unzip and /usr/bin/oh-my-posh may
+    # exist — override \`command -v\` to report them as missing so the
+    # auto-install path actually runs.
+    command() {
+      if [ \"\$1\" = '-v' ]; then
+        case \"\$2\" in unzip|oh-my-posh) return 1 ;; esac
+      fi
+      builtin command \"\$@\"
+    }
+    pm_install() {
+      printf 'PM_INSTALL_CALLED: %s\\n' \"\$*\"
+      return 0
+    }
+    ensure_omp || true
+  "
+  printf '%s\n' "$output" | grep -q '^PM_INSTALL_CALLED: unzip$'
+  rm -rf "$T"
+}
+
+# Extends the existing gawk auto-install to cover ble.sh's other two
+# build-time deps (make, git). On a clean Ubuntu box none of the three
+# are present by default; the user said yes to ble.sh, so we install all
+# three rather than aborting.
+@test "ensure_blesh: auto-installs make + git + gawk when all missing" {
+  T="$(mktemp -d)"
+  mkdir -p "$T/bin"
+  run bash -c "
+    PATH='$T/bin:/usr/bin:/bin'
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=linux MODE=system UNATTENDED=1 TOOLS_ALLOW=ble.sh
+    # Real make/git/gawk live in /usr/bin on most boxes — override
+    # \`command -v\` for these three so the auto-install loop fires for
+    # all of them.
+    command() {
+      if [ \"\$1\" = '-v' ]; then
+        case \"\$2\" in make|git|gawk) return 1 ;; esac
+      fi
+      builtin command \"\$@\"
+    }
+    pm_install() {
+      printf 'PM_INSTALL_CALLED: %s\\n' \"\$*\"
+      return 0
+    }
+    ensure_blesh || true
+  "
+  printf '%s\n' "$output" | grep -q '^PM_INSTALL_CALLED: make$'
+  printf '%s\n' "$output" | grep -q '^PM_INSTALL_CALLED: git$'
+  printf '%s\n' "$output" | grep -q '^PM_INSTALL_CALLED: gawk$'
+  rm -rf "$T"
+}
+
+# Verify __rec_install_quietly captures the wrapped function's stdout +
+# stderr to a per-tool log file. Stub a noisy function; assert the log
+# file gets the output AND that the user-facing terminal stays clean
+# of the wrapped function's chatter.
+@test "__rec_install_quietly: captures stdout and stderr to log file" {
+  T="$(mktemp -d)"
+  run bash -c "
+    export REC_CACHE_DIR='$T/cache'
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    noisy() {
+      echo 'STDOUT_CHATTER'
+      echo 'STDERR_CHATTER' >&2
+      return 0
+    }
+    __rec_install_quietly 'Installing noisy' noisy noisy
+    echo '---'
+    cat '$T/cache/install-logs/noisy.log'
+  "
+  [ "$status" -eq 0 ]
+  # The terminal output (stdout of the test run) must NOT contain the
+  # chatter from inside noisy() — it should only contain the spinner's
+  # final ✓/label line and our \`echo ---\` separator.
+  before_sep="\$(printf '%s\n' "$output" | sed '/^---\$/q' | head -n -1)"
+  ! printf '%s\n' "$before_sep" | grep -q STDOUT_CHATTER
+  ! printf '%s\n' "$before_sep" | grep -q STDERR_CHATTER
+  # The log file SHOULD have both.
+  after_sep="\$(printf '%s\n' "$output" | sed -n '/^---\$/,\$p' | tail -n +2)"
+  printf '%s\n' "$after_sep" | grep -q STDOUT_CHATTER
+  printf '%s\n' "$after_sep" | grep -q STDERR_CHATTER
+  rm -rf "$T"
+}
+
+# Regression: Ubuntu's needrestart hook injects 5+ lines of "Running
+# kernel seems to be up-to-date" / "No services need to be restarted"
+# after every apt-get install. NEEDRESTART_MODE=l (list-only) + SUSPEND=1
+# silence it. install.sh exports these at script top so every pm_install
+# inherits them.
+@test "install.sh sets NEEDRESTART_MODE and NEEDRESTART_SUSPEND" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    echo \"NEEDRESTART_MODE=[\$NEEDRESTART_MODE]\"
+    echo \"NEEDRESTART_SUSPEND=[\$NEEDRESTART_SUSPEND]\"
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'NEEDRESTART_MODE=\[l\]'
+  printf '%s\n' "$output" | grep -qx 'NEEDRESTART_SUSPEND=\[1\]'
+}
+
 @test "__rec_default_term sets TERM=xterm-256color when empty" {
   run bash -c "
     REC_INSTALL_SOURCED=1

@@ -206,6 +206,14 @@ case "$(uname -s)" in
   *) die "unsupported OS: $(uname -s)" ;;
 esac
 
+# --- quiet needrestart (Ubuntu) --------------------------------------------
+# Ubuntu auto-runs `needrestart` after every apt-get install, dumping 5+
+# lines per tool ("Running kernel seems to be up-to-date" / "No services
+# need to be restarted" / …). MODE=l + SUSPEND=1 makes it list-only and
+# bypassable, suppressing the post-install chatter without disabling the
+# tool itself. Ignored on Debian-without-needrestart and macOS.
+export NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1
+
 # --- detect invoking user's shell ------------------------------------------
 # Under `sudo bash`, $SHELL is unreliable (env_reset strips it; on macOS it
 # often ends up /bin/sh from root's defaults). $SUDO_USER + the system's
@@ -412,6 +420,15 @@ ensure_omp() {
       warn "Homebrew not found; install oh-my-posh manually: https://ohmyposh.dev"
     fi
   else
+    # oh-my-posh's official installer needs unzip; pre-install it so the
+    # pipe doesn't bail with "unzip is required to install Oh My Posh."
+    if ! command -v unzip >/dev/null 2>&1; then
+      log "oh-my-posh needs unzip; installing..."
+      if ! pm_install unzip; then
+        warn "oh-my-posh requires unzip (apt install unzip / dnf install unzip)."
+        return 1
+      fi
+    fi
     local bindir=/usr/local/bin
     [ "$(id -u)" -ne 0 ] && bindir="$HOME/.local/bin"
     mkdir -p "$bindir"
@@ -860,34 +877,28 @@ ensure_blesh() {
     }
   fi
   log "Installing ble.sh..."
-  if ! command -v make >/dev/null 2>&1; then
-    warn "ble.sh install needs 'make' (apt install make / brew install make)."
-    return 1
-  fi
-  if ! command -v git >/dev/null 2>&1; then
-    warn "ble.sh install needs 'git'."
-    return 1
-  fi
-  # ble.sh's Makefile requires GNU Awk specifically — BSD awk on macOS and
-  # mawk (some Debian variants) both fail at GNUmakefile:29 with "Sorry, gawk
-  # could not be found". Surface an actionable, OS-specific install command
-  # rather than letting `make` explode with a cryptic message.
-  if ! command -v gawk >/dev/null 2>&1; then
-    # The user explicitly opted in to ble.sh, so opt them in to its
-    # dependency too. pm_install hits the first available package manager
-    # (brew / apt-get / dnf / pacman / zypper / apk).
-    log "ble.sh needs gawk (GNU Awk); installing it..."
-    if ! pm_install gawk; then
-      warn "ble.sh requires gawk (GNU Awk) — BSD awk and mawk are rejected by its Makefile."
-      if [ "$OS" = mac ]; then
-        warn "  brew install gawk"
-      else
-        warn "  apt install gawk    # Debian/Ubuntu"
-        warn "  dnf install gawk    # Fedora/RHEL"
+  # ble.sh's build chain needs make + git + gawk. (gawk specifically —
+  # BSD awk on macOS and mawk on some Debian variants are rejected by
+  # GNUmakefile:29 with "Sorry, gawk could not be found".) The user
+  # explicitly opted in to ble.sh, so opt them in to its build deps too:
+  # try pm_install for each missing one; only fall through to the
+  # actionable warning when the package manager itself fails.
+  local _bdep
+  for _bdep in make git gawk; do
+    if ! command -v "$_bdep" >/dev/null 2>&1; then
+      log "ble.sh needs $_bdep; installing..."
+      if ! pm_install "$_bdep"; then
+        warn "ble.sh requires $_bdep (and the others: make, git, gawk)."
+        if [ "$OS" = mac ]; then
+          warn "  brew install make git gawk"
+        else
+          warn "  apt install make git gawk    # Debian/Ubuntu"
+          warn "  dnf install make git gawk    # Fedora/RHEL"
+        fi
+        return 1
       fi
-      return 1
     fi
-  fi
+  done
   local tmpdir
   tmpdir="$(mktemp -d)"
   if git clone --recursive --depth 1 --shallow-submodules \
@@ -903,6 +914,52 @@ ensure_blesh() {
   return 1
 }
 
+# __rec_install_quietly LABEL TOOL CMD [ARG...] -> run CMD with a spinner
+# (if rec_ui_spin is loaded) and capture stdout+stderr to a per-tool log
+# at $REC_CACHE_DIR/install-logs/<tool>.log. Falls back to a step+log line
+# when the spinner isn't available. On failure tails the last 10 log
+# lines to stderr for actionable context.
+__rec_install_quietly() {
+  local _riq_label="$1" _riq_tool="$2"
+  shift 2
+  local _riq_logdir _riq_logfile _riq_rc
+  _riq_logdir="${REC_CACHE_DIR:-${HOME}/.cache/rec-shell}/install-logs"
+  command mkdir -p "$_riq_logdir" 2>/dev/null || true
+  _riq_logfile="$_riq_logdir/$_riq_tool.log"
+  # rec_ui_spin lives in lib/ui-interactive.sh. install.sh is normally
+  # standalone, but after clone_or_update the lib is on disk — try to
+  # source it on demand. If unavailable, the fallback path still works.
+  if ! command -v rec_ui_spin >/dev/null 2>&1; then
+    [ -r "$TARGET_DIR/lib/ui-interactive.sh" ] \
+      && . "$TARGET_DIR/lib/ui-interactive.sh" 2>/dev/null || true
+  fi
+  # Inner closure: redirects the wrapped command's stdout+stderr to the
+  # log file. rec_ui_spin's own >/dev/null wrap is a no-op once this
+  # closure has already moved everything to the file.
+  __rec_iqr() { "$@" >"$_riq_logfile" 2>&1; }
+  if command -v rec_ui_spin >/dev/null 2>&1; then
+    if rec_ui_spin "$_riq_label" __rec_iqr "$@"; then _riq_rc=0; else _riq_rc=$?; fi
+  else
+    log "$_riq_label"
+    if "$@" >"$_riq_logfile" 2>&1; then _riq_rc=0; else _riq_rc=$?; fi
+    [ "$_riq_rc" -eq 0 ] && ok "$_riq_tool" || warn "$_riq_tool failed"
+  fi
+  if [ "$_riq_rc" -ne 0 ]; then
+    warn "log: $_riq_logfile"
+    tail -n 10 "$_riq_logfile" 2>/dev/null | sed 's/^/  /' >&2 || true
+  fi
+  return "$_riq_rc"
+}
+
+# __rec_install_tool TOOL FUNC -> if TOOL is in the allowlist, run FUNC
+# under the quiet spinner. Filtered-out tools skip silently (no spinner
+# blip for tools that wouldn't run anyway).
+__rec_install_tool() {
+  local _rit_tool="$1" _rit_func="$2"
+  tool_selected "$_rit_tool" || return 0
+  __rec_install_quietly "$_rit_tool" "$_rit_tool" "$_rit_func"
+}
+
 install_tools_all() {
   # Two "skip" sentinels:
   #   none -> user passed --no-tools; tell them we honored that.
@@ -916,18 +973,18 @@ install_tools_all() {
       ;;
     done) return 0 ;;
   esac
-  ensure_fzf
-  ensure_eza
-  ensure_bat
-  ensure_fd
-  ensure_rg
-  ensure_btop
-  ensure_ncdu
-  ensure_whois
-  ensure_dig
-  ensure_zsh_autosuggestions
-  ensure_zsh_syntax_highlighting
-  ensure_blesh
+  __rec_install_tool fzf                    ensure_fzf
+  __rec_install_tool eza                    ensure_eza
+  __rec_install_tool bat                    ensure_bat
+  __rec_install_tool fd                     ensure_fd
+  __rec_install_tool ripgrep                ensure_rg
+  __rec_install_tool btop                   ensure_btop
+  __rec_install_tool ncdu                   ensure_ncdu
+  __rec_install_tool whois                  ensure_whois
+  __rec_install_tool dig                    ensure_dig
+  __rec_install_tool zsh-autosuggestions    ensure_zsh_autosuggestions
+  __rec_install_tool zsh-syntax-highlighting ensure_zsh_syntax_highlighting
+  __rec_install_tool ble.sh                 ensure_blesh
 }
 
 # Replace the per-tool Y/N confirm() prompts with a single multiselect (the
@@ -1065,8 +1122,8 @@ clone_or_update
 install_loader_lines
 install_profile_d_dropin
 maybe_multiselect_tools
-ensure_omp
-ensure_zoxide
+__rec_install_quietly "oh-my-posh" oh-my-posh ensure_omp
+__rec_install_quietly "zoxide"     zoxide     ensure_zoxide
 install_tools_all
 
 # Pick the rc file the user's *current* shell will pick up on a fresh
