@@ -485,6 +485,16 @@ pm_install() {
   return 1
 }
 
+# __rec_default_term -> give TERM a sensible default if the env stripped it.
+# `sudo` with default sudoers (env_reset) removes TERM, which makes the
+# multiselect picker bail (__rec_ui_interactive rejects empty TERM). Real
+# terminals under sudo still render ANSI just fine, so we plug a modern
+# default back in.
+__rec_default_term() {
+  [ -z "${TERM:-}" ] && export TERM=xterm-256color
+  return 0
+}
+
 # ensure_tool NAME CHECK_BIN PROMPT -> ask, then install via the package
 # manager. CHECK_BIN is the binary name to look for on PATH. The package
 # names per PM may differ (e.g. fd-find on Debian) — callers pass them as
@@ -832,14 +842,20 @@ ensure_blesh() {
   # could not be found". Surface an actionable, OS-specific install command
   # rather than letting `make` explode with a cryptic message.
   if ! command -v gawk >/dev/null 2>&1; then
-    warn "ble.sh requires gawk (GNU Awk) — BSD awk and mawk are rejected by its Makefile."
-    if [ "$OS" = mac ]; then
-      warn "  brew install gawk"
-    else
-      warn "  apt install gawk    # Debian/Ubuntu"
-      warn "  dnf install gawk    # Fedora/RHEL"
+    # The user explicitly opted in to ble.sh, so opt them in to its
+    # dependency too. pm_install hits the first available package manager
+    # (brew / apt-get / dnf / pacman / zypper / apk).
+    log "ble.sh needs gawk (GNU Awk); installing it..."
+    if ! pm_install gawk; then
+      warn "ble.sh requires gawk (GNU Awk) — BSD awk and mawk are rejected by its Makefile."
+      if [ "$OS" = mac ]; then
+        warn "  brew install gawk"
+      else
+        warn "  apt install gawk    # Debian/Ubuntu"
+        warn "  dnf install gawk    # Fedora/RHEL"
+      fi
+      return 1
     fi
-    return 1
   fi
   local tmpdir
   tmpdir="$(mktemp -d)"
@@ -949,6 +965,9 @@ maybe_multiselect_tools() {
   # per-tool confirm() flow (confirm() reads from /dev/tty directly and
   # works fine under curl|bash). Same `</dev/tty` redirect on the actual
   # call so __rec_ui_readkey sees a real terminal.
+  # sudo's env_reset also strips TERM, which __rec_ui_interactive rejects;
+  # default it back to xterm-256color so the picker can actually render.
+  __rec_default_term
   if ! __rec_ui_interactive <"$_tty_dev" 2>/dev/null; then
     return 0
   fi

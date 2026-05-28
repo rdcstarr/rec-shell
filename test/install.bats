@@ -583,6 +583,9 @@ EOF
     # TOOLS_ALLOW=ble.sh models the explicit-opt-in path (e.g. \`rec install
     # ble.sh\`), which bypasses tool_selected's prompt-only shell/OS filter.
     OS=mac MODE=system UNATTENDED=1 TOOLS_ALLOW=ble.sh
+    # Force pm_install to fail so we drop through to the actionable warning
+    # (deterministic across Linux CI / macOS dev box).
+    pm_install() { return 1; }
     ensure_blesh
   "
   # ensure_blesh returns 1 on gawk-missing, so don't assert status == 0.
@@ -591,4 +594,65 @@ EOF
   printf '%s\n' "$output" | grep -q gawk
   printf '%s\n' "$output" | grep -q 'brew install gawk'
   rm -rf "$T"
+}
+
+# Regression: on Debian under \`curl | sudo bash\`, the user said y to ble.sh
+# and the installer bailed with "ble.sh requires gawk". When the user
+# explicitly opted in to ble.sh, we should auto-install its dependency
+# (gawk) via the system package manager rather than punting back to them.
+@test "ensure_blesh: auto-installs gawk via pm_install when missing" {
+  T="$(mktemp -d)"
+  mkdir -p "$T/bin"
+  printf '#!/bin/sh\nexit 0\n' >"$T/bin/make"
+  # Stub git to fail the clone deliberately — we only care that pm_install
+  # got called for gawk, not that the full build completes.
+  printf '#!/bin/sh\nexit 1\n' >"$T/bin/git"
+  chmod +x "$T/bin/make" "$T/bin/git"
+  run bash -c "
+    PATH='$T/bin:/usr/bin:/bin'
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=linux MODE=system UNATTENDED=1 TOOLS_ALLOW=ble.sh
+    pm_install() {
+      printf 'PM_INSTALL_CALLED: %s\\n' \"\$*\"
+      # Simulate apt-get succeeding by dropping a stub gawk on PATH.
+      printf '#!/bin/sh\\nexit 0\\n' >'$T/bin/gawk'
+      chmod +x '$T/bin/gawk'
+      return 0
+    }
+    ensure_blesh
+  "
+  printf '%s\n' "$output" | grep -q '^PM_INSTALL_CALLED: gawk$'
+  # When pm_install succeeds we must NOT fall through to the actionable
+  # warning (that's the "all hope lost" path).
+  ! printf '%s\n' "$output" | grep -q 'ble.sh requires gawk'
+  rm -rf "$T"
+}
+
+# Under \`sudo\` with default sudoers (env_reset), TERM is stripped. The
+# multiselect probe in maybe_multiselect_tools rejects an empty TERM, so
+# the picker never renders and users get one y/N prompt per tool instead.
+# __rec_default_term gives us a sensible default to plug back in.
+@test "__rec_default_term sets TERM=xterm-256color when empty" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    unset TERM
+    __rec_default_term
+    echo \"TERM=\$TERM\"
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'TERM=xterm-256color'
+}
+
+@test "__rec_default_term preserves an existing TERM" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    export TERM=screen-256color
+    __rec_default_term
+    echo \"TERM=\$TERM\"
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'TERM=screen-256color'
 }
