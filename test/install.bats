@@ -555,6 +555,61 @@ EOF
   printf '%s\n' "$output" | grep -qx 'TOOLS_ALLOW=\[fd\]'
 }
 
+# Regression: when the multiselect populated TOOLS_ALLOW the user had ALREADY
+# answered "yes, install these" — we must NOT then ask y/N per tool. The
+# fix sets UNATTENDED=1 after a successful pick so ensure_X functions all
+# skip their confirm() and just install.
+@test "install_tools_all: prints skip message when INSTALL_TOOLS=none (user --no-tools)" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    INSTALL_TOOLS=none
+    install_tools_all
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--no-tools"* ]]
+}
+
+@test "install_tools_all: silent when INSTALL_TOOLS=done (nothing was missing)" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    INSTALL_TOOLS=done
+    install_tools_all
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"--no-tools"* ]]
+  [[ "$output" != *"Skipping"* ]]
+}
+
+@test "__finalize_pick: sets TOOLS_ALLOW (comma-joined) and UNATTENDED=1" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    UNATTENDED=0 TOOLS_ALLOW=''
+    __finalize_pick 'fd fzf eza '
+    echo TOOLS_ALLOW=[\$TOOLS_ALLOW]
+    echo UNATTENDED=[\$UNATTENDED]
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'TOOLS_ALLOW=\[fd,fzf,eza\]'
+  printf '%s\n' "$output" | grep -qx 'UNATTENDED=\[1\]'
+}
+
+@test "__finalize_pick: empty input leaves state for caller to detect (no TOOLS_ALLOW set)" {
+  # install.sh has \`set -e\`, so capture the non-zero rc via an if-else rather
+  # than letting it abort the test script.
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    UNATTENDED=0 TOOLS_ALLOW=''
+    if __finalize_pick ''; then rc=0; else rc=\$?; fi
+    echo rc=\$rc TOOLS_ALLOW=[\$TOOLS_ALLOW] UNATTENDED=[\$UNATTENDED]
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'rc=1 TOOLS_ALLOW=\[\] UNATTENDED=\[0\]'
+}
+
 @test "maybe_multiselect_tools is a no-op when --no-tools is set" {
   run bash -c "
     REC_INSTALL_SOURCED=1

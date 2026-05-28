@@ -103,6 +103,103 @@ setup() {
   [[ "$output" == *"rc=0"* ]]
 }
 
+# Regression: __rec_ui_readkey used to branch on $REC_SHELL_NAME (the user's
+# login shell) instead of $BASH_VERSION / $ZSH_VERSION (the interpreter that's
+# actually running this code). Under `sudo bash` invoked by a zsh user,
+# REC_SHELL_NAME=zsh would steer bash into `read -rsk1` (zsh-only syntax),
+# `-k` is "invalid option" in bash → read fails silently → caller loops on a
+# stale $_rui_k forever. Lock in the interpreter-aware detection.
+@test "__rec_ui_readkey reads a real byte under bash even when REC_SHELL_NAME=zsh" {
+  run bash -c "
+    export REC_SHELL_NAME=zsh
+    . '$UII'
+    printf 'X' | __rec_ui_readkey
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == "X" ]]
+}
+
+@test "rec_ui_multiselect_plain: 'a' selects everything" {
+  # Heredoc (<<<) keeps the function in the main shell; a pipe would put it
+  # in a subshell and REC_UI_REPLY would never reach the test.
+  run bash -c "
+    . '$UI'
+    . '$UII'
+    rec_ui_multiselect_plain prompt alpha beta gamma <<< 'a' >/dev/null 2>/dev/null
+    echo REPLY=[\$REC_UI_REPLY]
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'REPLY=\[alpha beta gamma \]'
+}
+
+@test "rec_ui_multiselect_plain: empty line (default) also selects everything" {
+  run bash -c "
+    . '$UI'
+    . '$UII'
+    rec_ui_multiselect_plain prompt alpha beta gamma <<< '' >/dev/null 2>/dev/null
+    echo REPLY=[\$REC_UI_REPLY]
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'REPLY=\[alpha beta gamma \]'
+}
+
+@test "rec_ui_multiselect_plain: 'n' selects nothing" {
+  run bash -c "
+    . '$UI'
+    . '$UII'
+    rec_ui_multiselect_plain prompt alpha beta gamma <<< 'n' >/dev/null 2>/dev/null
+    echo REPLY=[\$REC_UI_REPLY]
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'REPLY=\[\]'
+}
+
+@test "rec_ui_multiselect_plain: numeric picks select those items" {
+  run bash -c "
+    . '$UI'
+    . '$UII'
+    rec_ui_multiselect_plain prompt alpha beta gamma <<< '1 3' >/dev/null 2>/dev/null
+    echo REPLY=[\$REC_UI_REPLY]
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'REPLY=\[alpha gamma \]'
+}
+
+@test "rec_ui_multiselect: pre-selects all items so Enter installs everything" {
+  # Stub __rec_ui_readkey to return 'enter' on first call so the picker
+  # commits immediately without any space-toggling. The default mark set
+  # should already include every item — REC_UI_REPLY contains all of them.
+  run bash -c "
+    . '$UI'
+    . '$UII'
+    # Force interactivity past the [ -t 0 ] && [ -t 2 ] check.
+    __rec_ui_interactive() { return 0; }
+    __rec_ui_readkey() { printf 'enter'; }
+    rec_ui_multiselect prompt alpha beta gamma >/dev/null 2>/dev/null
+    echo REPLY=[\$REC_UI_REPLY]
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'REPLY=\[alpha beta gamma \]'
+}
+
+@test "__rec_ui_readkey: bash + REC_SHELL_NAME=zsh + EOF returns empty not 'enter'" {
+  # We're not actually asserting 'enter' here — empty stdin is allowed to
+  # mean 'enter' (the legacy '' branch). What we ARE asserting: read does
+  # not loop, and the function returns within milliseconds. If the function
+  # ever spins (the runaway bug), `timeout` kills it and the test fails.
+  if command -v timeout >/dev/null 2>&1; then
+    run bash -c "
+      export REC_SHELL_NAME=zsh
+      . '$UII'
+      timeout 2 bash -c '. \"$UII\"; __rec_ui_readkey </dev/null'
+      echo rc=\$?
+    "
+    [[ "$output" != *"rc=124"* ]]  # 124 = timeout fired
+  else
+    skip "timeout(1) not available on this host"
+  fi
+}
+
 @test "rec_ui_spin propagates the command exit code (non-TTY path)" {
   run sh -c ". '$UI'; . '$UII'; rec_ui_spin label true </dev/null; echo rc=\$?"
   [[ "$output" == *"rc=0"* ]]

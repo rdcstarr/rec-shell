@@ -424,7 +424,9 @@ ensure_zoxide() {
 # build needs gawk, which BSD awk on macOS isn't.
 tool_selected() {
   local name="$1"
-  [ "$INSTALL_TOOLS" = none ] && return 1
+  case "$INSTALL_TOOLS" in
+    none | done) return 1 ;;
+  esac
   # Allowlist wins: when the user names a tool explicitly (--tools=NAME or
   # `rec install NAME`), honor that and skip the shell/OS prompt filter —
   # they opted in.
@@ -873,10 +875,18 @@ ensure_blesh() {
 }
 
 install_tools_all() {
-  [ "$INSTALL_TOOLS" = none ] && {
-    log "Skipping all CLI tools (--no-tools)"
-    return 0
-  }
+  # Two "skip" sentinels:
+  #   none -> user passed --no-tools; tell them we honored that.
+  #   done -> maybe_multiselect_tools already determined nothing needs installing
+  #           (or user picked nothing in the multiselect); stay silent so we
+  #           don't print a misleading "--no-tools" line.
+  case "$INSTALL_TOOLS" in
+    none)
+      log "Skipping all CLI tools (--no-tools)"
+      return 0
+      ;;
+    done) return 0 ;;
+  esac
   ensure_fzf
   ensure_eza
   ensure_bat
@@ -903,7 +913,7 @@ install_tools_all() {
 # behavior — confirm() short-circuits when an allowlist is set).
 maybe_multiselect_tools() {
   [ "$UNATTENDED" -eq 1 ] && return 0
-  [ "$INSTALL_TOOLS" = none ] && return 0
+  case "$INSTALL_TOOLS" in none | done) return 0 ;; esac
   [ -n "$TOOLS_ALLOW" ] && return 0
   [ -n "$TOOLS_DENY" ] && return 0
   # `[ -e /dev/tty ]` isn't enough: in some sandboxed contexts (no controlling
@@ -942,7 +952,7 @@ maybe_multiselect_tools() {
   _miss="$(rec_tools_missing | awk 'NF')"
   if [ -z "$_miss" ]; then
     log 'All CLI tools already installed.'
-    INSTALL_TOOLS=none
+    INSTALL_TOOLS=done
     return 0
   fi
 
@@ -971,17 +981,38 @@ maybe_multiselect_tools() {
   # If anything still fails (no /dev/tty in a sandboxed CI), we fall
   # through to the per-tool confirm() flow which reads /dev/tty directly.
   __rec_default_term
-  if ! __rec_ui_interactive <"$_tty_dev" 2>"$_tty_dev"; then
-    return 0
+  REC_UI_REPLY=''
+  if __rec_ui_interactive <"$_tty_dev" 2>"$_tty_dev"; then
+    rec_ui_multiselect "Pick CLI tools to install (space=toggle, a=all, enter=confirm)" "$@" <"$_tty_dev" 2>"$_tty_dev" >/dev/null || REC_UI_REPLY=''
   fi
-  rec_ui_multiselect "Pick CLI tools to install (space=toggle, a=all, enter=confirm)" "$@" <"$_tty_dev" 2>"$_tty_dev" >/dev/null || return 0
+  # If the TUI picker couldn't render (probe failed, picker returned non-zero,
+  # or REC_UI_REPLY is still empty), fall back to the line-based prompt that
+  # works under every sudo/pty/TERM combination.
   if [ -z "${REC_UI_REPLY:-}" ]; then
-    INSTALL_TOOLS=none
+    rec_ui_multiselect_plain "Pick CLI tools to install" "$@" <"$_tty_dev" 2>"$_tty_dev" || REC_UI_REPLY=''
+  fi
+  if ! __finalize_pick "$REC_UI_REPLY"; then
+    INSTALL_TOOLS=done
     log 'Nothing selected — skipping CLI tools.'
     return 0
   fi
-  TOOLS_ALLOW="$(printf '%s' "$REC_UI_REPLY" | tr ' ' ',' | sed 's/,$//')"
   log "Selected: $TOOLS_ALLOW"
+}
+
+# __finalize_pick PICK_STRING -> turn the picker's space-separated reply into
+# a comma-joined TOOLS_ALLOW AND switch the run into "unattended" so the
+# downstream ensure_X functions don't re-ask y/N — the user already said yes
+# by ticking those boxes in the picker. Returns 1 (caller bails) on empty.
+__finalize_pick() {
+  local _picks="$1"
+  local _trimmed
+  _trimmed="$(printf '%s' "$_picks" | tr -s ' ' | sed 's/^ //; s/ $//')"
+  if [ -z "$_trimmed" ]; then
+    return 1
+  fi
+  TOOLS_ALLOW="$(printf '%s' "$_trimmed" | tr ' ' ',')"
+  UNATTENDED=1
+  return 0
 }
 
 # --- run -------------------------------------------------------------------

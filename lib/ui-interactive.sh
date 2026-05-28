@@ -7,7 +7,9 @@
 # Every widget guards on __rec_ui_interactive first: on a real terminal it
 # drives a raw-key TUI; otherwise it takes a non-blocking fallback (a default,
 # the first option, or a synchronous run) so scripts and CI never hang. The
-# raw-key paths use bash/zsh-specific reads branched on $REC_SHELL_NAME; the
+# raw-key paths use bash/zsh-specific reads branched on $BASH_VERSION /
+# $ZSH_VERSION (the *actual* interpreter running this file, not the user's
+# login shell — they differ when install.sh runs `sudo bash` for a zsh user); the
 # fallbacks stay POSIX so this file is still safe to source under any sh.
 #
 # Convention: the live TUI is drawn to stderr and the chosen RESULT is printed
@@ -36,7 +38,7 @@ __rec_ui_readkey() {
 '
   _rui_cr=$(printf '\r')
   _rui_esc=$(printf '\033')
-  if [ "${REC_SHELL_NAME:-}" = zsh ]; then
+  if [ -n "${ZSH_VERSION:-}" ]; then
     read -rsk1 _rui_k 2>/dev/null
   else
     IFS= read -rsn1 _rui_k 2>/dev/null
@@ -57,7 +59,7 @@ __rec_ui_readkey() {
       ;;
   esac
   # We saw ESC: read the rest of the CSI arrow sequence (2 more bytes).
-  if [ "${REC_SHELL_NAME:-}" = zsh ]; then
+  if [ -n "${ZSH_VERSION:-}" ]; then
     read -rsk2 _rui_rest 2>/dev/null
   else
     IFS= read -rsn2 _rui_rest 2>/dev/null
@@ -248,12 +250,67 @@ rec_ui_multiselect() {
   __rec_ui_multiselect_tui "$_rui_prompt" "$@"
 }
 
+# rec_ui_multiselect_plain PROMPT OPT... — line-based fallback for the TUI
+# picker. Used when there's no real terminal for cursor escapes (sudo+pty
+# hijack, dumb TERM, sandboxed CI). Reads ONE line from stdin and parses:
+#   - empty or 'a' / 'A' / 'all'  -> every item is picked
+#   - 'n' / 'N' / 'none' / 'q'    -> nothing picked (returns 0 with empty)
+#   - space-separated 1-based numbers ("1 3") -> just those items
+# Always sets REC_UI_REPLY exactly like the TUI version (space-terminated
+# list of picked option names), so install.sh's __finalize_pick handles
+# both branches identically.
+rec_ui_multiselect_plain() {
+  _rump_prompt=$1
+  shift
+  REC_UI_REPLY=''
+  printf '\n%s\n' "$_rump_prompt" >&2
+  _rump_idx=1
+  for _rump_opt in "$@"; do
+    printf '  %d) %s\n' "$_rump_idx" "$_rump_opt" >&2
+    _rump_idx=$((_rump_idx + 1))
+  done
+  printf '\nType numbers (e.g. "1 2"), "a" for all, "n" for none [a]: ' >&2
+  IFS= read -r _rump_line || _rump_line=""
+  case "$_rump_line" in
+    '' | a | A | all | ALL)
+      for _rump_opt in "$@"; do
+        REC_UI_REPLY="$REC_UI_REPLY$_rump_opt "
+      done
+      ;;
+    n | N | none | NONE | q | Q)
+      : # nothing
+      ;;
+    *)
+      # Walk the chosen numbers; quietly ignore anything outside [1, $#].
+      for _rump_pick in $_rump_line; do
+        case "$_rump_pick" in
+          *[!0-9]* | '') continue ;;
+        esac
+        if [ "$_rump_pick" -ge 1 ] && [ "$_rump_pick" -le $# ]; then
+          # Print the Nth positional arg — eval is the POSIX way without arrays.
+          eval "_rump_opt=\${$_rump_pick}"
+          REC_UI_REPLY="$REC_UI_REPLY$_rump_opt "
+        fi
+      done
+      ;;
+  esac
+  unset _rump_prompt _rump_idx _rump_opt _rump_line _rump_pick
+  return 0
+}
+
 __rec_ui_multiselect_tui() {
   _rui_prompt=$1
   shift
   _rui_n=$#
   _rui_sel=1
+  # Pre-select every item so a user who just wants "install everything" can
+  # press Enter. Space toggles individual items off; `a` toggles all.
   _rui_marks=' '
+  _rui_idx=1
+  while [ "$_rui_idx" -le "$_rui_n" ]; do
+    _rui_marks="$_rui_marks$_rui_idx "
+    _rui_idx=$((_rui_idx + 1))
+  done
   {
     __rec_ui_emit 1 "$REC_UI_S_CYAN" "$REC_UI_G_TL"
     printf ' %s' "$_rui_prompt"
