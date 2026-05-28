@@ -131,14 +131,41 @@ case "$REC_SHELL_NAME" in
       . "$HOME/.local/share/blesh/ble.sh" --noattach
       if [ -n "${BLE_VERSION:-}" ]; then
         PROMPT_COMMAND="ble-attach${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
-        # Disable oh-my-posh's transient-prompt → ble.sh integration. Our
-        # bundled `recweb` theme has no `transient_prompt` block, so its
-        # `oh-my-posh print transient` output is empty; with
-        # prompt_ps1_transient=always (which oh-my-posh init.NNN.sh ends
-        # with), ble.sh swaps every prior prompt to that empty string
-        # and the OS/host/path header disappears after each command.
-        # Clear both to keep the full prompt visible on every line.
-        bleopt prompt_ps1_transient= prompt_ps1_final= 2>/dev/null || true
+        # Permanently block oh-my-posh's transient-prompt → ble.sh
+        # integration. oh-my-posh init.NNN.sh ends with:
+        #   bleopt prompt_ps1_transient=always
+        #   bleopt prompt_ps1_final='$(oh-my-posh print transient ...)'
+        # Our bundled `recweb` theme has no `transient_prompt` block,
+        # so `print transient` returns empty and ble.sh swaps every
+        # prior prompt to that empty string — the OS/host/path header
+        # vanishes after each command.
+        #
+        # /etc/bash.bashrc's oh-my-posh init runs BEFORE us and hits
+        # our bleopt no-op pre-stub (harmless). But users often have
+        # the same `eval "$(oh-my-posh init bash …)"` in ~/.bashrc,
+        # which runs AFTER rec-shell loads — by then bleopt is real
+        # and the assignment sticks. A one-shot reset can't catch that.
+        #
+        # Wrap the real bleopt so prompt_ps1_transient= and
+        # prompt_ps1_final= assignments are silently dropped from any
+        # source (init script, manual call, whatever), while every
+        # other bleopt operation passes through unchanged.
+        __rec_blepm_orig="$(declare -f bleopt 2>/dev/null)"
+        if [ -n "$__rec_blepm_orig" ]; then
+          # Copy bleopt to __rec_real_bleopt by renaming the
+          # `bleopt ()` header on the first line of declare -f's output.
+          eval "$(printf '%s\n' "$__rec_blepm_orig" | sed '1s/^bleopt /__rec_real_bleopt /')"
+          bleopt() {
+            case "${1:-}" in
+              prompt_ps1_transient=*) return 0 ;;
+              prompt_ps1_final=*)     return 0 ;;
+            esac
+            __rec_real_bleopt "$@"
+          }
+          # Reset whatever was already set before the wrapper installed.
+          __rec_real_bleopt prompt_ps1_transient= prompt_ps1_final= 2>/dev/null || true
+        fi
+        unset __rec_blepm_orig
       fi
     fi
     ;;
