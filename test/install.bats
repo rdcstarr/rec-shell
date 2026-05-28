@@ -914,6 +914,12 @@ EOF
       fi
       builtin command \"\$@\"
     }
+    # Override __rec_install_quietly so pm_install's call shows on
+    # stdout (the real wrapper would route it to a log file).
+    __rec_install_quietly() {
+      shift 2
+      \"\$@\"
+    }
     pm_install() {
       printf 'PM_INSTALL: %s\\n' \"\$*\"
       return 0

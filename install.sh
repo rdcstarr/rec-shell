@@ -238,9 +238,18 @@ detect_platform
 # --user/--system was passed explicitly.
 prompt_install_mode() {
   [ -n "${MODE_EXPLICIT:-}" ] && return 0
+  # Auto-detect existing checkout — only when WE can actually use it.
+  # /opt/rec-shell is root-owned (system install). If we're not root,
+  # picking MODE=system would have git refuse with "dubious ownership"
+  # later. Bail through to the prompt instead so the user can re-run
+  # with sudo (or pick user mode for a clean fresh install).
   if [ -d "$HOME/.rec-shell/.git" ]; then MODE=user; return 0; fi
-  if [ -d /opt/rec-shell/.git ]; then MODE=system; return 0; fi
+  if [ -d /opt/rec-shell/.git ] && [ "$(id -u)" -eq 0 ]; then MODE=system; return 0; fi
   if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    if [ -d /opt/rec-shell/.git ] && [ "$(id -u)" -ne 0 ]; then
+      printf '%sNote: /opt/rec-shell exists (root-owned). Re-run with sudo to upgrade it, or pick [u]ser for a fresh personal install.%s\n' \
+        "$C_Y" "$C_0" >/dev/tty
+    fi
     printf '%sInstall where? [u]ser (~/.rec-shell, no sudo) or [s]ystem (/opt/rec-shell, sudo)? [u]: %s' \
       "$C_B" "$C_0" >/dev/tty
     IFS= read -r _mode </dev/tty || _mode=u
@@ -577,19 +586,22 @@ pm_install() {
   local _pmi_sudo=""
   if [ "$(id -u)" -ne 0 ]; then
     if sudo -n true 2>/dev/null; then
-      _pmi_sudo="sudo -n"
+      # Preserve NEEDRESTART_* (sudo's env_reset would strip them, leaving
+      # Ubuntu's needrestart hook to dump 5+ lines of "Running kernel
+      # seems to be up-to-date" per install).
+      _pmi_sudo="sudo -n -E NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1"
     else
       return 1
     fi
   fi
   if command -v apt-get >/dev/null 2>&1; then
-    $_pmi_sudo apt-get update -qq && $_pmi_sudo apt-get install -y "$@" && return 0
+    $_pmi_sudo apt-get update -qq && $_pmi_sudo apt-get install -y -qq "$@" && return 0
   elif command -v dnf >/dev/null 2>&1; then
-    $_pmi_sudo dnf install -y "$@" && return 0
+    $_pmi_sudo dnf install -y -q "$@" && return 0
   elif command -v pacman >/dev/null 2>&1; then
-    $_pmi_sudo pacman -S --noconfirm "$@" && return 0
+    $_pmi_sudo pacman -S --noconfirm --quiet "$@" && return 0
   elif command -v apk >/dev/null 2>&1; then
-    $_pmi_sudo apk add --no-cache "$@" && return 0
+    $_pmi_sudo apk add --no-cache --quiet "$@" && return 0
   fi
   return 1
 }
@@ -994,9 +1006,12 @@ install_build_deps() {
   if [ -z "$_ibd_needed" ]; then
     return 0
   fi
+  # Wrap pm_install so the apt-get / needrestart output goes to a log
+  # file instead of streaming through the terminal. The label trims the
+  # leading space from $_ibd_needed (we built it with " dep1 dep2 …").
   # shellcheck disable=SC2086 # intentional word-split: pm_install wants
   # each dep as a separate positional arg.
-  pm_install $_ibd_needed
+  __rec_install_quietly "Build deps:$_ibd_needed" build-deps pm_install $_ibd_needed
 }
 
 # __rec_install_quietly LABEL TOOL CMD [ARG...] -> run CMD with a spinner
@@ -1134,6 +1149,12 @@ if [ "$TOOLS_ONLY" -eq 1 ]; then
 fi
 
 prompt_install_mode
+# v2.0.0 contract: install everything without per-tool y/N. The mode
+# prompt is the ONLY interactive step. Force UNATTENDED=1 so every
+# downstream confirm() in ensure_X short-circuits to "yes". (The legacy
+# UNATTENDED=0 path mattered only when the picker was the gate; v2.0
+# removed the picker.)
+UNATTENDED=1
 # Re-resolve TARGET_DIR now that MODE may have been chosen via the prompt
 # (the early system/user dispatch ran before prompt_install_mode).
 if [ "$MODE" = system ]; then
