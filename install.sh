@@ -153,8 +153,8 @@ confirm() {
 # --- parse args ------------------------------------------------------------
 while [ $# -gt 0 ]; do
   case "$1" in
-    --user) MODE=user ;;
-    --system) MODE=system ;;
+    --user) MODE=user; MODE_EXPLICIT=1 ;;
+    --system) MODE=system; MODE_EXPLICIT=1 ;;
     --unattended | -y) UNATTENDED=1 ;;
     --no-omp) INSTALL_OMP=no ;;
     --no-zoxide) INSTALL_ZOXIDE=no ;;
@@ -199,12 +199,60 @@ if [ -n "$TOOLS_ALLOW" ] && [ -n "$TOOLS_DENY" ]; then
   exit 2
 fi
 
-# --- detect OS -------------------------------------------------------------
-case "$(uname -s)" in
-  Darwin) OS=mac ;;
-  Linux) OS=linux ;;
-  *) die "unsupported OS: $(uname -s)" ;;
-esac
+# --- platform detection: OS + DISTRO + package manager -------------------
+# detect_platform sets OS, DISTRO, PM in one place. Idempotent — tests pin
+# the inputs via REC_TEST_UNAME / REC_OS_RELEASE_FILE so they don't depend
+# on the host's actual distro.
+detect_platform() {
+  local _u _osrel
+  _u="${REC_TEST_UNAME:-$(uname -s)}"
+  _osrel="${REC_OS_RELEASE_FILE:-/etc/os-release}"
+  case "$_u" in
+    Darwin) OS=mac; DISTRO=mac; PM=brew ;;
+    Linux)
+      OS=linux; DISTRO=unknown; PM=unknown
+      if [ -r "$_osrel" ]; then
+        # shellcheck disable=SC1090
+        ( . "$_osrel" 2>/dev/null; printf 'ID=%s\nID_LIKE=%s\n' "${ID-}" "${ID_LIKE-}" ) >"${TMPDIR:-/tmp}/.rec-os-id.$$"
+        # shellcheck disable=SC1091
+        . "${TMPDIR:-/tmp}/.rec-os-id.$$" 2>/dev/null || true
+        rm -f "${TMPDIR:-/tmp}/.rec-os-id.$$"
+      fi
+      case "${ID:-}:${ID_LIKE:-}" in
+        ubuntu*|debian*|*:*ubuntu*|*:*debian*|pop*|linuxmint*|*:*mint*) DISTRO="${ID:-debian}"; PM=apt ;;
+        fedora*|rhel*|centos*|rocky*|almalinux*|*:*fedora*|*:*rhel*) DISTRO="${ID:-fedora}"; PM=dnf ;;
+        arch*|manjaro*|endeavouros*|*:*arch*) DISTRO="${ID:-arch}"; PM=pacman ;;
+        alpine*|*:*alpine*) DISTRO=alpine; PM=apk ;;
+        opensuse*|suse*|*:*suse*) DISTRO="${ID:-opensuse}"; PM=zypper ;;
+      esac
+      ;;
+    *) die "unsupported OS: $_u" ;;
+  esac
+  unset ID ID_LIKE
+  return 0
+}
+detect_platform
+
+# prompt_install_mode reads /dev/tty so it works under `curl|bash` too.
+# Skipped when an existing checkout is detected (auto-upgrade) or when
+# --user/--system was passed explicitly.
+prompt_install_mode() {
+  [ -n "${MODE_EXPLICIT:-}" ] && return 0
+  if [ -d "$HOME/.rec-shell/.git" ]; then MODE=user; return 0; fi
+  if [ -d /opt/rec-shell/.git ]; then MODE=system; return 0; fi
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    printf '%sInstall where? [u]ser (~/.rec-shell, no sudo) or [s]ystem (/opt/rec-shell, sudo)? [u]: %s' \
+      "$C_B" "$C_0" >/dev/tty
+    IFS= read -r _mode </dev/tty || _mode=u
+    case "${_mode:-u}" in
+      s|S|system) MODE=system ;;
+      *)          MODE=user ;;
+    esac
+    unset _mode
+  else
+    MODE=user
+  fi
+}
 
 # --- quiet needrestart (Ubuntu) --------------------------------------------
 # Ubuntu auto-runs `needrestart` after every apt-get install, dumping 5+
@@ -927,6 +975,30 @@ ensure_blesh() {
   return 1
 }
 
+# install_build_deps -> collect every binary the bundled tools need, install
+# the missing ones in ONE pm_install call (one apt-get transaction, one
+# spinner, one log file). Replaces the per-tool dep loops scattered across
+# ensure_omp/ensure_blesh/ensure_eza/ensure_btop. Runs once, early in the
+# bootstrap, before any per-tool installer touches PATH.
+install_build_deps() {
+  local _ibd_needed="" _ibd_dep
+  # Why each:
+  #   curl, git  → infrastructure (clones, downloads)
+  #   unzip, zip → oh-my-posh's official installer needs unzip; some
+  #                themes ship .zip archives that need zip too
+  #   make, gawk → ble.sh's build chain (Makefile + GNU awk)
+  #   tar        → eza/btop GitHub-release fallback unpacks .tar.gz
+  for _ibd_dep in curl git unzip zip make gawk tar; do
+    command -v "$_ibd_dep" >/dev/null 2>&1 || _ibd_needed="$_ibd_needed $_ibd_dep"
+  done
+  if [ -z "$_ibd_needed" ]; then
+    return 0
+  fi
+  # shellcheck disable=SC2086 # intentional word-split: pm_install wants
+  # each dep as a separate positional arg.
+  pm_install $_ibd_needed
+}
+
 # __rec_install_quietly LABEL TOOL CMD [ARG...] -> run CMD with a spinner
 # (if rec_ui_spin is loaded) and capture stdout+stderr to a per-tool log
 # at $REC_CACHE_DIR/install-logs/<tool>.log. Falls back to a step+log line
@@ -968,154 +1040,83 @@ __rec_install_quietly() {
   return "$_riq_rc"
 }
 
-# __rec_install_tool TOOL FUNC -> if TOOL is in the allowlist, run FUNC
-# under the quiet spinner. Filtered-out tools skip silently (no spinner
-# blip for tools that wouldn't run anyway).
-__rec_install_tool() {
-  local _rit_tool="$1" _rit_func="$2"
-  tool_selected "$_rit_tool" || return 0
-  __rec_install_quietly "$_rit_tool" "$_rit_tool" "$_rit_func"
+# ensure_one_tool NAME -> dispatch by tool name to the matching per-tool
+# installer. Replaces the 12-line static dispatch in the old
+# install_tools_all so install_all_tools can walk the catalog generically.
+ensure_one_tool() {
+  case "$1" in
+    fzf)                       ensure_fzf ;;
+    eza)                       ensure_eza ;;
+    bat)                       ensure_bat ;;
+    fd)                        ensure_fd ;;
+    ripgrep)                   ensure_rg ;;
+    btop)                      ensure_btop ;;
+    ncdu)                      ensure_ncdu ;;
+    whois)                     ensure_whois ;;
+    dig)                       ensure_dig ;;
+    zsh-autosuggestions)       ensure_zsh_autosuggestions ;;
+    zsh-syntax-highlighting)   ensure_zsh_syntax_highlighting ;;
+    ble.sh)                    ensure_blesh ;;
+    *) warn "unknown tool: $1"; return 1 ;;
+  esac
 }
 
-install_tools_all() {
-  # Two "skip" sentinels:
-  #   none -> user passed --no-tools; tell them we honored that.
-  #   done -> maybe_multiselect_tools already determined nothing needs installing
-  #           (or user picked nothing in the multiselect); stay silent so we
-  #           don't print a misleading "--no-tools" line.
+# install_all_tools -> walk the catalog of MISSING tools and install each
+# under the quiet spinner, with a (i/N) counter in the label so the user
+# sees overall progress. No picker, no y/N — that's the whole point of
+# v2.0.0. Honors --no-tools (the only opt-out).
+install_all_tools() {
   case "$INSTALL_TOOLS" in
-    none)
-      log "Skipping all CLI tools (--no-tools)"
-      return 0
-      ;;
+    none) log "Skipping all CLI tools (--no-tools)"; return 0 ;;
     done) return 0 ;;
   esac
-  __rec_install_tool fzf                    ensure_fzf
-  __rec_install_tool eza                    ensure_eza
-  __rec_install_tool bat                    ensure_bat
-  __rec_install_tool fd                     ensure_fd
-  __rec_install_tool ripgrep                ensure_rg
-  __rec_install_tool btop                   ensure_btop
-  __rec_install_tool ncdu                   ensure_ncdu
-  __rec_install_tool whois                  ensure_whois
-  __rec_install_tool dig                    ensure_dig
-  __rec_install_tool zsh-autosuggestions    ensure_zsh_autosuggestions
-  __rec_install_tool zsh-syntax-highlighting ensure_zsh_syntax_highlighting
-  __rec_install_tool ble.sh                 ensure_blesh
-}
-
-# Replace the per-tool Y/N confirm() prompts with a single multiselect (the
-# same widget `rec install` uses, lib/ui-interactive.sh's rec_ui_multiselect).
-# Becomes available once clone_or_update has dropped lib/ui*.sh into the
-# checkout. No-op when:
-#   - --unattended or --no-tools or explicit --tools=/--without= override,
-#   - no TTY (curl | bash with no /dev/tty, CI, dumb terminals),
-#   - any required lib file is missing (partial clone, broken release).
-# Sets TOOLS_ALLOW to the user's picks; install_tools_all then runs each
-# ensure_* and tool_selected lets only the allowlisted ones through (existing
-# behavior — confirm() short-circuits when an allowlist is set).
-maybe_multiselect_tools() {
-  [ "$UNATTENDED" -eq 1 ] && return 0
-  case "$INSTALL_TOOLS" in none | done) return 0 ;; esac
-  [ -n "$TOOLS_ALLOW" ] && return 0
-  [ -n "$TOOLS_DENY" ] && return 0
-  # `[ -e /dev/tty ]` isn't enough: in some sandboxed contexts (no controlling
-  # terminal, certain CI runners) /dev/tty exists in the filesystem but
-  # opening it errors "Device not configured". Probe via a real open via
-  # exec, and if it fails fall through silently to the per-tool flow.
-  local _tty_dev=/dev/tty
-  if ! (true <"$_tty_dev") 2>/dev/null; then
-    return 0
-  fi
-  [ -r "$TARGET_DIR/lib/core.sh" ] || return 0
-  [ -r "$TARGET_DIR/lib/ui.sh" ] || return 0
-  [ -r "$TARGET_DIR/lib/ui-interactive.sh" ] || return 0
-  [ -r "$TARGET_DIR/lib/tools-catalog.sh" ] || return 0
-
-  # rec_tools_missing filters by REC_SHELL_NAME (lib/tools-catalog.sh:111-122).
-  # We key it off USER_SHELL — the invoking user's actual login shell — so
-  # the picker mirrors what tool_selected enforces below. Works for both
-  # --user and --system: zsh users only see zsh-*, bash users only see ble.sh.
+  # Source lib/tools-catalog.sh (+ core.sh which it depends on) so we can
+  # ask which tools are missing. clone_or_update has run by now. Skip the
+  # source if rec_tools_missing is already defined — tests pre-stub it.
   REC_SHELL_NAME="$USER_SHELL"
   REC_SHELL_DIR="$TARGET_DIR"
   export REC_SHELL_NAME REC_SHELL_DIR
-
-  # core.sh defines rec_have, which tools-catalog.sh uses internally
-  # (lib/tools-catalog.sh:82 rec_have <bin> for presence detection).
-  # shellcheck disable=SC1090,SC1091
-  . "$TARGET_DIR/lib/core.sh" 2>/dev/null || return 0
-  # shellcheck disable=SC1090,SC1091
-  . "$TARGET_DIR/lib/ui.sh" 2>/dev/null || return 0
-  # shellcheck disable=SC1090,SC1091
-  . "$TARGET_DIR/lib/ui-interactive.sh" 2>/dev/null || return 0
-  # shellcheck disable=SC1090,SC1091
-  . "$TARGET_DIR/lib/tools-catalog.sh" 2>/dev/null || return 0
-
-  local _miss
-  _miss="$(rec_tools_missing | awk 'NF')"
-  if [ -z "$_miss" ]; then
-    log 'All CLI tools already installed.'
-    INSTALL_TOOLS=done
+  if ! command -v rec_tools_missing >/dev/null 2>&1; then
+    if [ -r "$TARGET_DIR/lib/core.sh" ]; then
+      # shellcheck disable=SC1091
+      . "$TARGET_DIR/lib/core.sh" 2>/dev/null || true
+    fi
+    if [ -r "$TARGET_DIR/lib/tools-catalog.sh" ]; then
+      # shellcheck disable=SC1091
+      . "$TARGET_DIR/lib/tools-catalog.sh" 2>/dev/null || true
+    fi
+  fi
+  local _missing _total _i=0 _ok=0 _fail=0 _tool
+  if [ -n "${TOOLS_ALLOW:-}" ]; then
+    # User pinned a tool set via --tools=a,b,c — walk that list directly.
+    _missing="$(printf '%s' "$TOOLS_ALLOW" | tr ',' '\n' | awk 'NF')"
+  elif command -v rec_tools_missing >/dev/null 2>&1; then
+    _missing="$(rec_tools_missing | awk 'NF')"
+  else
+    warn "tools-catalog unavailable; skipping bundled tool installs"
     return 0
   fi
-
-  # Newline-split into positional args. Mirrors cli-install.sh:137-146 — zsh
-  # needs sh_word_split for unquoted expansion, but install.sh is bash, so
-  # the unquoted `set --` here is fine.
-  set --
-  local _oldIFS="$IFS"
-  IFS='
-'
-  # shellcheck disable=SC2086 # intentional word-split on newline
-  set -- $_miss
-  IFS="$_oldIFS"
-
-  # Under `curl -fsSL ... | sudo bash`, several env hostilities stack up
-  # and we have to neutralise each one or the picker silently bails:
-  #   - stdin is the curl pipe (not a TTY) — redirect from /dev/tty.
-  #   - sudo with `use_pty` (Debian default since bookworm) attaches the
-  #     child's stdout/stderr to its own pty, so `[ -t 2 ]` in the child
-  #     returns false and __rec_ui_interactive rejects the run. Redirect
-  #     stderr to /dev/tty as well so the probe sees a real terminal AND
-  #     the picker's drawing (which writes to fd 2) actually lands on
-  #     the user's screen.
-  #   - sudo's env_reset strips TERM, which __rec_ui_interactive also
-  #     rejects when empty — __rec_default_term plugs in a default.
-  # If anything still fails (no /dev/tty in a sandboxed CI), we fall
-  # through to the per-tool confirm() flow which reads /dev/tty directly.
-  __rec_default_term
-  REC_UI_REPLY=''
-  if __rec_ui_interactive <"$_tty_dev" 2>"$_tty_dev"; then
-    rec_ui_multiselect "Pick CLI tools to install (space=toggle, a=all, enter=confirm)" "$@" <"$_tty_dev" 2>"$_tty_dev" >/dev/null || REC_UI_REPLY=''
-  fi
-  # If the TUI picker couldn't render (probe failed, picker returned non-zero,
-  # or REC_UI_REPLY is still empty), fall back to the line-based prompt that
-  # works under every sudo/pty/TERM combination.
-  if [ -z "${REC_UI_REPLY:-}" ]; then
-    rec_ui_multiselect_plain "Pick CLI tools to install" "$@" <"$_tty_dev" 2>"$_tty_dev" || REC_UI_REPLY=''
-  fi
-  if ! __finalize_pick "$REC_UI_REPLY"; then
-    INSTALL_TOOLS=done
-    log 'Nothing selected — skipping CLI tools.'
+  if [ -z "$_missing" ]; then
+    log "CLI tools: all already installed"
     return 0
   fi
-  log "Selected: $TOOLS_ALLOW"
-}
-
-# __finalize_pick PICK_STRING -> turn the picker's space-separated reply into
-# a comma-joined TOOLS_ALLOW AND switch the run into "unattended" so the
-# downstream ensure_X functions don't re-ask y/N — the user already said yes
-# by ticking those boxes in the picker. Returns 1 (caller bails) on empty.
-__finalize_pick() {
-  local _picks="$1"
-  local _trimmed
-  _trimmed="$(printf '%s' "$_picks" | tr -s ' ' | sed 's/^ //; s/ $//')"
-  if [ -z "$_trimmed" ]; then
-    return 1
+  _total=$(printf '%s\n' "$_missing" | wc -l | tr -d ' ')
+  while IFS= read -r _tool; do
+    [ -z "$_tool" ] && continue
+    _i=$((_i + 1))
+    if __rec_install_quietly "CLI tools ($_i/$_total) $_tool" "$_tool" ensure_one_tool "$_tool"; then
+      _ok=$((_ok + 1))
+    else
+      _fail=$((_fail + 1))
+    fi
+  done <<EOF
+$_missing
+EOF
+  if [ "$_fail" -eq 0 ]; then
+    ok "CLI tools: $_ok installed"
+  else
+    warn "CLI tools: $_ok installed, $_fail failed (logs in ${REC_CACHE_DIR:-$HOME/.cache/rec-shell}/install-logs/)"
   fi
-  TOOLS_ALLOW="$(printf '%s' "$_trimmed" | tr ' ' ',')"
-  UNATTENDED=1
-  return 0
 }
 
 # --- run -------------------------------------------------------------------
@@ -1127,10 +1128,18 @@ if [ "${REC_INSTALL_SOURCED:-0}" -ne 1 ]; then
 if [ "$TOOLS_ONLY" -eq 1 ]; then
   log "Installing/refreshing CLI tools only (--tools-only)"
   TARGET_DIR="${REC_SHELL_DIR:-$TARGET_DIR}"
-  maybe_multiselect_tools
-  install_tools_all
+  install_all_tools
   ok "tools install complete."
   exit 0
+fi
+
+prompt_install_mode
+# Re-resolve TARGET_DIR now that MODE may have been chosen via the prompt
+# (the early system/user dispatch ran before prompt_install_mode).
+if [ "$MODE" = system ]; then
+  TARGET_DIR="${TARGET_DIR:-/opt/rec-shell}"
+else
+  TARGET_DIR="${TARGET_DIR:-$HOME/.rec-shell}"
 fi
 
 log "Installing rec-shell (${C_B}${MODE}${C_0}) into ${C_B}${TARGET_DIR}${C_0}"
@@ -1138,10 +1147,10 @@ ensure_git
 clone_or_update
 install_loader_lines
 install_profile_d_dropin
-maybe_multiselect_tools
+install_build_deps
 __rec_install_quietly "oh-my-posh" oh-my-posh ensure_omp
 __rec_install_quietly "zoxide"     zoxide     ensure_zoxide
-install_tools_all
+install_all_tools
 
 # Pick the rc file the user's *current* shell will pick up on a fresh
 # start. Keys off USER_SHELL (the invoking user's actual shell) rather

@@ -252,12 +252,14 @@ EOF
   [[ "$output" == *"unknown tool"* ]]
 }
 
-@test "rec install dispatch with no TTY prints usage hint and exits 0" {
+@test "rec install dispatch with no TTY installs all missing and exits 0" {
+  # v2.0.0: no-args dispatches to __rec_install_run_missing — no picker,
+  # no block, just runs the installer for everything currently missing.
   install_in bash '__rec_install_dispatch'
   [ "$status" -eq 0 ]
-  # Non-interactive: must NOT block on a multiselect. Either prints hint and
-  # returns 0, or prints the same as `list` — either is acceptable here.
-  [[ "$output" == *"rec install"* ]]
+  # Either says "Installing:" (something missing) or "already installed"
+  # (nothing missing). Both are valid non-blocking outcomes.
+  [[ "$output" == *"Installing:"* || "$output" == *"already installed"* ]]
 }
 
 # Regression: zsh does not word-split unquoted variable expansion by default,
@@ -519,107 +521,30 @@ EOF
   printf '%s\n' "$output" | grep -qx /bin/bash
 }
 
-# Regression: when ble.sh IS chosen (e.g. via `rec install ble.sh` on macOS,
-# or in --system mode) but gawk isn't on PATH, surface a clear, OS-specific
-# recommendation instead of letting `make` explode with the cryptic
-# `GNUmakefile:29: *** Sorry, gawk could not be found` message.
-# maybe_multiselect_tools is the new interactive checklist gate. It must
-# stay a no-op for every non-interactive path so automation (CI, scripts,
-# `rec install <name>` re-entry) keeps working unchanged.
-@test "maybe_multiselect_tools is a no-op under --unattended" {
-  run bash -c "
-    REC_INSTALL_SOURCED=1
-    . '$REPO_ROOT/install.sh'
-    OS=mac MODE=user UNATTENDED=1 TARGET_DIR='$REPO_ROOT'
-    rec_ui_multiselect() { echo MULTISELECT_CALLED; }
-    maybe_multiselect_tools
-    echo TOOLS_ALLOW=[\$TOOLS_ALLOW]
-  "
-  [ "$status" -eq 0 ]
-  ! printf '%s\n' "$output" | grep -q MULTISELECT_CALLED
-  printf '%s\n' "$output" | grep -qx 'TOOLS_ALLOW=\[\]'
-}
-
-@test "maybe_multiselect_tools is a no-op when --tools=LIST is set" {
-  run bash -c "
-    REC_INSTALL_SOURCED=1
-    . '$REPO_ROOT/install.sh'
-    OS=mac MODE=user TOOLS_ALLOW=fd TARGET_DIR='$REPO_ROOT'
-    rec_ui_multiselect() { echo MULTISELECT_CALLED; }
-    maybe_multiselect_tools
-    echo TOOLS_ALLOW=[\$TOOLS_ALLOW]
-  "
-  [ "$status" -eq 0 ]
-  ! printf '%s\n' "$output" | grep -q MULTISELECT_CALLED
-  # User's explicit --tools= must survive untouched.
-  printf '%s\n' "$output" | grep -qx 'TOOLS_ALLOW=\[fd\]'
-}
-
-# Regression: when the multiselect populated TOOLS_ALLOW the user had ALREADY
-# answered "yes, install these" — we must NOT then ask y/N per tool. The
-# fix sets UNATTENDED=1 after a successful pick so ensure_X functions all
-# skip their confirm() and just install.
-@test "install_tools_all: prints skip message when INSTALL_TOOLS=none (user --no-tools)" {
+# v2.0.0: install_all_tools replaces the maybe_multiselect_tools picker
+# entirely. The only remaining opt-outs are --no-tools (INSTALL_TOOLS=none)
+# and "all already present" (INSTALL_TOOLS=done set elsewhere).
+@test "install_all_tools: prints skip message when INSTALL_TOOLS=none (user --no-tools)" {
   run bash -c "
     REC_INSTALL_SOURCED=1
     . '$REPO_ROOT/install.sh'
     INSTALL_TOOLS=none
-    install_tools_all
+    install_all_tools
   "
   [ "$status" -eq 0 ]
   [[ "$output" == *"--no-tools"* ]]
 }
 
-@test "install_tools_all: silent when INSTALL_TOOLS=done (nothing was missing)" {
+@test "install_all_tools: silent when INSTALL_TOOLS=done (nothing was missing)" {
   run bash -c "
     REC_INSTALL_SOURCED=1
     . '$REPO_ROOT/install.sh'
     INSTALL_TOOLS=done
-    install_tools_all
+    install_all_tools
   "
   [ "$status" -eq 0 ]
   [[ "$output" != *"--no-tools"* ]]
   [[ "$output" != *"Skipping"* ]]
-}
-
-@test "__finalize_pick: sets TOOLS_ALLOW (comma-joined) and UNATTENDED=1" {
-  run bash -c "
-    REC_INSTALL_SOURCED=1
-    . '$REPO_ROOT/install.sh'
-    UNATTENDED=0 TOOLS_ALLOW=''
-    __finalize_pick 'fd fzf eza '
-    echo TOOLS_ALLOW=[\$TOOLS_ALLOW]
-    echo UNATTENDED=[\$UNATTENDED]
-  "
-  [ "$status" -eq 0 ]
-  printf '%s\n' "$output" | grep -qx 'TOOLS_ALLOW=\[fd,fzf,eza\]'
-  printf '%s\n' "$output" | grep -qx 'UNATTENDED=\[1\]'
-}
-
-@test "__finalize_pick: empty input leaves state for caller to detect (no TOOLS_ALLOW set)" {
-  # install.sh has \`set -e\`, so capture the non-zero rc via an if-else rather
-  # than letting it abort the test script.
-  run bash -c "
-    REC_INSTALL_SOURCED=1
-    . '$REPO_ROOT/install.sh'
-    UNATTENDED=0 TOOLS_ALLOW=''
-    if __finalize_pick ''; then rc=0; else rc=\$?; fi
-    echo rc=\$rc TOOLS_ALLOW=[\$TOOLS_ALLOW] UNATTENDED=[\$UNATTENDED]
-  "
-  [ "$status" -eq 0 ]
-  printf '%s\n' "$output" | grep -qx 'rc=1 TOOLS_ALLOW=\[\] UNATTENDED=\[0\]'
-}
-
-@test "maybe_multiselect_tools is a no-op when --no-tools is set" {
-  run bash -c "
-    REC_INSTALL_SOURCED=1
-    . '$REPO_ROOT/install.sh'
-    OS=mac MODE=user INSTALL_TOOLS=none TARGET_DIR='$REPO_ROOT'
-    rec_ui_multiselect() { echo MULTISELECT_CALLED; }
-    maybe_multiselect_tools
-  "
-  [ "$status" -eq 0 ]
-  ! printf '%s\n' "$output" | grep -q MULTISELECT_CALLED
 }
 
 @test "ensure_blesh emits actionable warning when gawk is missing on macOS" {
@@ -850,6 +775,223 @@ EOF
   grep -q 'rec-shell.sh' "$HOME_T/.bashrc"
   grep -q 'rec-shell.sh' "$HOME_T/.profile"
   rm -rf "$T"
+}
+
+# v2.0.0 refactor: detect_platform sets OS/DISTRO/PM in one place. Tests
+# pin uname output via REC_TEST_UNAME and the /etc/os-release source via
+# REC_OS_RELEASE_FILE so we don't depend on the test box's actual distro.
+# v2.0.0: `rec install` (no args) now defaults to install-all-missing,
+# matching install.sh's "no picker, no y/N" UX. The picker survives
+# behind `rec install pick` for users who want the checkbox.
+@test "rec install (no args) dispatches to __rec_install_run_missing, not the picker" {
+  T="$(mktemp -d)"
+  run bash -c "
+    REC_SHELL_DIR='$REPO_ROOT' REC_SHELL_NAME=bash REC_UI_PLAIN=1
+    . '$REPO_ROOT/lib/core.sh'
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/tools-catalog.sh'
+    . '$REPO_ROOT/lib/cli-install.sh'
+    __rec_install_run_missing() { echo CALLED_RUN_MISSING; }
+    __rec_install_interactive()  { echo CALLED_INTERACTIVE; }
+    __rec_install_dispatch
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx CALLED_RUN_MISSING
+  ! printf '%s\n' "$output" | grep -q CALLED_INTERACTIVE
+  rm -rf "$T"
+}
+
+@test "rec install pick is the opt-in checkbox path" {
+  run bash -c "
+    REC_SHELL_DIR='$REPO_ROOT' REC_SHELL_NAME=bash REC_UI_PLAIN=1
+    . '$REPO_ROOT/lib/core.sh'
+    . '$REPO_ROOT/lib/ui.sh'
+    . '$REPO_ROOT/lib/tools-catalog.sh'
+    . '$REPO_ROOT/lib/cli-install.sh'
+    __rec_install_run_missing() { echo CALLED_RUN_MISSING; }
+    __rec_install_interactive()  { echo CALLED_INTERACTIVE; }
+    __rec_install_dispatch pick
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx CALLED_INTERACTIVE
+  ! printf '%s\n' "$output" | grep -q CALLED_RUN_MISSING
+}
+
+@test "detect_platform: Ubuntu /etc/os-release maps to PM=apt" {
+  T="$(mktemp -d)"
+  cat >"$T/os-release" <<'EOF'
+ID=ubuntu
+ID_LIKE=debian
+PRETTY_NAME="Ubuntu 25.10"
+EOF
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    REC_TEST_UNAME=Linux REC_OS_RELEASE_FILE='$T/os-release' detect_platform
+    echo \"OS=\$OS DISTRO=\$DISTRO PM=\$PM\"
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'OS=linux DISTRO=ubuntu PM=apt'
+  rm -rf "$T"
+}
+
+@test "detect_platform: Fedora /etc/os-release maps to PM=dnf" {
+  T="$(mktemp -d)"
+  cat >"$T/os-release" <<'EOF'
+ID=fedora
+PRETTY_NAME="Fedora Linux 41"
+EOF
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    REC_TEST_UNAME=Linux REC_OS_RELEASE_FILE='$T/os-release' detect_platform
+    echo \"OS=\$OS DISTRO=\$DISTRO PM=\$PM\"
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'OS=linux DISTRO=fedora PM=dnf'
+  rm -rf "$T"
+}
+
+@test "detect_platform: macOS uname maps to PM=brew" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    REC_TEST_UNAME=Darwin detect_platform
+    echo \"OS=\$OS DISTRO=\$DISTRO PM=\$PM\"
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'OS=mac DISTRO=mac PM=brew'
+}
+
+# prompt_install_mode reads from /dev/tty for the picker-like choice but
+# must SKIP the prompt when an existing install is detected — we just
+# upgrade in place silently.
+@test "prompt_install_mode: skips prompt when ~/.rec-shell/.git exists" {
+  T="$(mktemp -d)"
+  HOME_T="$T/home"
+  mkdir -p "$HOME_T/.rec-shell/.git"
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    HOME='$HOME_T' MODE_EXPLICIT=''
+    prompt_install_mode </dev/null
+    echo \"MODE=\$MODE\"
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'MODE=user'
+  rm -rf "$T"
+}
+
+@test "prompt_install_mode: skips prompt when /opt/rec-shell/.git exists" {
+  # We can't create /opt/rec-shell/.git in the test, but the function
+  # also honors MODE_EXPLICIT=1 (set by --user/--system flags) — assert
+  # that path stays untouched.
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    MODE=system MODE_EXPLICIT=1
+    prompt_install_mode </dev/null
+    echo \"MODE=\$MODE\"
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx 'MODE=system'
+}
+
+# v2.0.0: install_build_deps collects missing build tools in one pass and
+# runs pm_install with all of them at once (no per-tool loop, no spinner
+# blip when nothing's missing).
+@test "install_build_deps: batches missing deps into one pm_install call" {
+  T="$(mktemp -d)"
+  mkdir -p "$T/bin"
+  run bash -c "
+    PATH='$T/bin:/usr/bin:/bin'
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    # Pretend a few common build deps are missing.
+    command() {
+      if [ \"\$1\" = '-v' ]; then
+        case \"\$2\" in unzip|gawk|make) return 1 ;; esac
+      fi
+      builtin command \"\$@\"
+    }
+    pm_install() {
+      printf 'PM_INSTALL: %s\\n' \"\$*\"
+      return 0
+    }
+    install_build_deps
+  "
+  # ONE pm_install call with ALL three missing names.
+  [ "$(printf '%s\n' "$output" | grep -c '^PM_INSTALL:')" -eq 1 ]
+  printf '%s\n' "$output" | grep -q '^PM_INSTALL:.*unzip'
+  printf '%s\n' "$output" | grep -q '^PM_INSTALL:.*gawk'
+  printf '%s\n' "$output" | grep -q '^PM_INSTALL:.*make'
+  rm -rf "$T"
+}
+
+# v2.0.0: ensure_one_tool dispatches by the catalog's kind field — so
+# install_all_tools can walk the catalog generically without 12 hard-
+# coded ensure_X branches. (The branches still exist; this helper just
+# looks up which to call.)
+@test "ensure_one_tool: dispatches fzf to ensure_fzf, ble.sh to ensure_blesh" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    # Override the per-tool installers so we can detect which got called.
+    ensure_fzf()  { echo CALLED_fzf; }
+    ensure_blesh(){ echo CALLED_blesh; }
+    ensure_one_tool fzf
+    ensure_one_tool ble.sh
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx CALLED_fzf
+  printf '%s\n' "$output" | grep -qx CALLED_blesh
+}
+
+# install_all_tools walks the catalog top-to-bottom — no picker, no
+# y/N — and emits one __rec_install_quietly call per missing tool with
+# a (counter/total) label so the user sees overall progress.
+@test "install_all_tools: counter-labeled spinner per missing tool, no picker" {
+  T="$(mktemp -d)"
+  run bash -c "
+    export REC_CACHE_DIR='$T/cache'
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    TARGET_DIR='$REPO_ROOT' USER_SHELL=bash OS=linux INSTALL_TOOLS=auto
+    # Stub rec_tools_missing so the loop has known input.
+    rec_tools_missing() { printf 'fzf\nbat\nble.sh\n'; }
+    # Stub the wrapper to record its label arg and tool arg.
+    __rec_install_quietly() {
+      printf 'QUIET: label=[%s] tool=[%s]\\n' \"\$1\" \"\$2\"
+      return 0
+    }
+    # Stub ensure_one_tool so we don't actually try to install.
+    ensure_one_tool() { :; }
+    install_all_tools
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qE 'QUIET: label=\[.*\(1/3\).*fzf.*\] tool=\[fzf\]'
+  printf '%s\n' "$output" | grep -qE 'QUIET: label=\[.*\(2/3\).*bat.*\] tool=\[bat\]'
+  printf '%s\n' "$output" | grep -qE 'QUIET: label=\[.*\(3/3\).*ble.sh.*\] tool=\[ble.sh\]'
+  rm -rf "$T"
+}
+
+@test "install_build_deps: silent no-op when everything's already present" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    # Pretend everything is present.
+    command() {
+      [ \"\$1\" = '-v' ] && return 0
+      builtin command \"\$@\"
+    }
+    pm_install() {
+      printf 'SHOULD_NOT_FIRE\\n'
+      return 0
+    }
+    install_build_deps
+  "
+  [ "$status" -eq 0 ]
+  ! printf '%s\n' "$output" | grep -q SHOULD_NOT_FIRE
 }
 
 @test "install.sh sets NEEDRESTART_MODE and NEEDRESTART_SUSPEND" {

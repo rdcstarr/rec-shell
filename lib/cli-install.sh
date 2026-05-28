@@ -16,11 +16,14 @@ __rec_install_dispatch() {
       __rec_install_list
       return $?
       ;;
-    all)
+    all | '')
+      # v2.0.0: default behavior is install-all-missing — no picker, no
+      # y/N, same as install.sh's `--unattended` path.
       __rec_install_run_missing
       return $?
       ;;
-    '')
+    pick | --pick | -p)
+      # Opt-in checkbox for users who want to choose explicitly.
       __rec_install_interactive
       return $?
       ;;
@@ -37,10 +40,11 @@ __rec_install_help() {
 rec install — install modern CLI tools from the rec-shell catalog
 
 Usage:
-  rec install              Interactive multiselect of MISSING tools.
+  rec install              Install every tool that is currently missing.
+                           (Same as `rec install all` — no picker, no y/N.)
+  rec install pick         Interactive checkbox to choose specific tools.
   rec install list         Show every catalog tool with [✓]/[✗] status.
-  rec install all          Install every tool that is currently missing.
-  rec install <tool>...    Install the named tools (skip prompts).
+  rec install <tool>...    Install the named tools.
   rec install help         Show this help.
 
 Tools are installed via install.sh --tools-only, so this never touches your

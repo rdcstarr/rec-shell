@@ -24,35 +24,42 @@ with no way to learn that a newer version existed. `rec-shell` replaces that:
 
 ## Install
 
-Per user (no root):
-
 ```sh
 curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | bash && exec $SHELL -l
 ```
 
-System-wide for every user on a server (adds the loader to `/etc` rc files
-plus a `/etc/profile.d/rec-shell.sh` drop-in so all future login shells pick
-it up automatically):
+That's it. The installer:
+
+- Asks once: **user** install (`~/.rec-shell`, no sudo — default) or **system**
+  install (`/opt/rec-shell`, needs sudo for every user on the box).
+- Detects your OS / package manager (apt / dnf / pacman / apk / brew).
+- Auto-installs build deps (`curl`, `git`, `unzip`, `zip`, `make`, `gawk`, `tar`)
+  in one transaction — silent unless something fails.
+- Installs every bundled CLI tool: oh-my-posh, zoxide, fzf, eza, bat, fd,
+  ripgrep, btop, ncdu, whois, dig, and shell line-editor plugins (ble.sh
+  for bash, zsh-autosuggestions + zsh-syntax-highlighting for zsh).
+- Wires the loader into `~/.bashrc` / `~/.zshrc` (and `~/.profile` so login
+  shells pick it up too).
+
+Re-running upgrades in place: `curl ... | bash` again gets you the latest
+version on top of the existing checkout. No flags, no prompts.
+
+Skip the prompt with an explicit mode:
 
 ```sh
+# user install (no sudo)
+curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | bash -s -- --user && exec $SHELL -l
+
+# system install (sudo, everyone on the machine gets it)
 curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | sudo bash -s -- --system && exec $SHELL -l
 ```
 
-The trailing `&& exec $SHELL -l` reloads your current shell so `rec` is
-available immediately — without it, the install still works but `rec`
-only shows up in future shells (the installer runs in a subshell and can't
-re-source your interactive one). Drop the suffix if you'd rather not
-restart your shell.
+Then run `rec doctor` to verify.
 
-Then run `rec doctor`.
-
-Installer flags: `--user` (default), `--system`, `--unattended`, `--no-omp`,
-`--no-zoxide`, `--dir DIR`, `--ref REF`. Overrides: `REC_SHELL_REPO_URL`,
-`REC_SHELL_REF`, `REC_SHELL_DIR`.
-
-> The installer offers to install [oh-my-posh](https://ohmyposh.dev) (the prompt,
-> with the bundled `recweb` theme) and [zoxide](https://github.com/ajeetdsouza/zoxide)
-> (the `z` smart-cd command) if they're missing — skip with `--no-omp` / `--no-zoxide`.
+Installer flags: `--user`, `--system`, `--unattended` (skip the mode prompt),
+`--no-tools` (skip the CLI tool bundle), `--no-omp`, `--no-zoxide`,
+`--dir DIR`, `--ref REF`. Per-tool install logs land at
+`~/.cache/rec-shell/install-logs/<tool>.log`.
 
 ## Commands
 
