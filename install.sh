@@ -172,9 +172,9 @@ while [ $# -gt 0 ]; do
       ;;
     --dir)
       shift
-      TARGET_DIR="${1:-}"
+      TARGET_DIR="${1:-}"; TARGET_DIR_EXPLICIT=1
       ;;
-    --dir=*) TARGET_DIR="${1#*=}" ;;
+    --dir=*) TARGET_DIR="${1#*=}"; TARGET_DIR_EXPLICIT=1 ;;
     --ref)
       shift
       REF="${1:-}"
@@ -993,6 +993,11 @@ ensure_blesh() {
 # ensure_omp/ensure_blesh/ensure_eza/ensure_btop. Runs once, early in the
 # bootstrap, before any per-tool installer touches PATH.
 install_build_deps() {
+  # macOS: skip entirely. Homebrew refuses to run as root (the --system
+  # path), and the Xcode CLT that any developer already has installed
+  # ships make/git/gawk/tar/unzip out of the box. Anything truly missing
+  # we surface lazily later (ble.sh is filtered off macOS anyway).
+  [ "$OS" = mac ] && return 0
   local _ibd_needed="" _ibd_dep
   # Why each:
   #   curl, git  → infrastructure (clones, downloads)
@@ -1155,12 +1160,19 @@ prompt_install_mode
 # UNATTENDED=0 path mattered only when the picker was the gate; v2.0
 # removed the picker.)
 UNATTENDED=1
-# Re-resolve TARGET_DIR now that MODE may have been chosen via the prompt
-# (the early system/user dispatch ran before prompt_install_mode).
-if [ "$MODE" = system ]; then
-  TARGET_DIR="${TARGET_DIR:-/opt/rec-shell}"
-else
-  TARGET_DIR="${TARGET_DIR:-$HOME/.rec-shell}"
+# Re-resolve TARGET_DIR now that MODE may have been chosen via the prompt.
+# Unless --dir was passed explicitly, MODE drives the path — ignore any
+# REC_SHELL_DIR that leaked in from a previously-installed loader (e.g.
+# the user has a system install in /opt/rec-shell, its loader exports
+# REC_SHELL_DIR=/opt/rec-shell to their shell; if they then run
+# `curl | bash` to install user-mode, we should target ~/.rec-shell,
+# not the inherited /opt/rec-shell they can't write to).
+if [ -z "${TARGET_DIR_EXPLICIT:-}" ]; then
+  if [ "$MODE" = system ]; then
+    TARGET_DIR=/opt/rec-shell
+  else
+    TARGET_DIR="$HOME/.rec-shell"
+  fi
 fi
 
 log "Installing rec-shell (${C_B}${MODE}${C_0}) into ${C_B}${TARGET_DIR}${C_0}"

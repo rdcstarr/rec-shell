@@ -907,6 +907,7 @@ EOF
     PATH='$T/bin:/usr/bin:/bin'
     REC_INSTALL_SOURCED=1
     . '$REPO_ROOT/install.sh'
+    OS=linux  # macOS short-circuit at top of install_build_deps must not fire
     # Pretend a few common build deps are missing.
     command() {
       if [ \"\$1\" = '-v' ]; then
@@ -979,6 +980,25 @@ EOF
   printf '%s\n' "$output" | grep -qE 'QUIET: label=\[.*\(2/3\).*bat.*\] tool=\[bat\]'
   printf '%s\n' "$output" | grep -qE 'QUIET: label=\[.*\(3/3\).*ble.sh.*\] tool=\[ble.sh\]'
   rm -rf "$T"
+}
+
+# Regression v2.0.2: previous installs leave their loader exporting
+# REC_SHELL_DIR=/opt/rec-shell. When the user then runs `curl | bash` to
+# install user-mode, install.sh used to inherit that env var as the
+# default TARGET_DIR and try to git-update /opt/rec-shell as a non-root
+# user, hitting "dubious ownership". MODE must win unless --dir was
+# passed explicitly.
+@test "install_build_deps: skipped on macOS (brew won't run as root)" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=mac
+    __rec_install_quietly() { printf 'SHOULD_NOT_FIRE\\n'; }
+    pm_install() { printf 'SHOULD_NOT_FIRE\\n'; }
+    install_build_deps
+  "
+  [ "$status" -eq 0 ]
+  ! printf '%s\n' "$output" | grep -q SHOULD_NOT_FIRE
 }
 
 @test "install_build_deps: silent no-op when everything's already present" {
