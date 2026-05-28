@@ -243,11 +243,23 @@ __rec_whois_domain() {
     return 1
   fi
 
-  _rwd_out="$(whois -- "$_rwd_domain" 2>/dev/null)" || _rwd_out=""
+  # Capture stderr separately so we can surface the real cause when the
+  # lookup fails (DNS error reaching whois.nic.<tld>, connection refused
+  # by the registry's whois server, network blocked, …) instead of the
+  # misleading "no data" message.
+  _rwd_err="$(mktemp 2>/dev/null || mktemp -t rec-whois.XXXXXX)"
+  _rwd_out="$(whois -- "$_rwd_domain" 2>"$_rwd_err")" || _rwd_out=""
   if [ -z "$_rwd_out" ]; then
-    rec_ui_err "whois returned no data for '$_rwd_domain'"
+    if [ -s "$_rwd_err" ]; then
+      rec_ui_err "whois lookup failed for '$_rwd_domain':"
+      sed 's/^/  /' "$_rwd_err" >&2
+    else
+      rec_ui_err "whois returned no data for '$_rwd_domain'"
+    fi
+    rm -f "$_rwd_err"
     return 1
   fi
+  rm -f "$_rwd_err"
 
   rec_ui_heading "WHOIS: $_rwd_domain"
   rec_ui_kv target "$_rwd_domain"
