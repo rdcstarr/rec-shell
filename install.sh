@@ -2,8 +2,8 @@
 #
 # rec-shell installer.
 #
-#   curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | bash
-#   curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | sudo bash -s -- --system
+#   curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | bash && exec $SHELL -l
+#   curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | sudo bash -s -- --system && exec $SHELL -l
 #
 # Clones the repo into a directory and adds ONE loader line to your shell rc.
 # It never overwrites your rc; the line is idempotent and your rc is backed up
@@ -206,12 +206,32 @@ case "$(uname -s)" in
   *) die "unsupported OS: $(uname -s)" ;;
 esac
 
+# --- detect invoking user's shell ------------------------------------------
+# Under `sudo bash`, $SHELL is unreliable (env_reset strips it or it points
+# at root's shell). $SUDO_USER + `getent passwd` resolves to the *invoking*
+# user's login shell, which is what we want — the rec-shell loader will run
+# in their shell, not root's. Fallback to $SHELL covers non-sudo runs.
+# Tests can pin USER_SHELL directly via env.
+detect_user_shell() {
+  local sh=""
+  if [ -n "${SUDO_USER:-}" ] && command -v getent >/dev/null 2>&1; then
+    sh="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f7)"
+  fi
+  [ -z "$sh" ] && sh="${SHELL:-/bin/bash}"
+  case "${sh##*/}" in
+    zsh) printf 'zsh\n' ;;
+    bash) printf 'bash\n' ;;
+    *) printf 'bash\n' ;;
+  esac
+}
+USER_SHELL="${USER_SHELL:-$(detect_user_shell)}"
+
 # --- target dir + privileges ----------------------------------------------
 if [ "$MODE" = system ]; then
   TARGET_DIR="${TARGET_DIR:-/opt/rec-shell}"
   if [ "$(id -u)" -ne 0 ]; then
     die "System install must run as root:
-  curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | sudo bash -s -- --system"
+  curl -fsSL https://rec-shell.recwebnetwork.com/install.sh | sudo bash -s -- --system && exec \$SHELL -l"
   fi
 else
   TARGET_DIR="${TARGET_DIR:-$HOME/.rec-shell}"
@@ -384,29 +404,34 @@ ensure_zoxide() {
 # --- modern CLI tools ------------------------------------------------------
 # tool_selected NAME -> 0 if this tool should be installed in the current run.
 #
-# OS-aware filtering: macOS's default shell since Catalina is zsh and BSD awk
-# means ble.sh's `make` build fails for the common user; Linux distros are
-# bash-by-default and only a minority install zsh. So in --user mode we hide
-# the plugin set that doesn't match the host's default. Edge cases (Linux+zsh
-# user, macOS+bash user) remain reachable via `rec install <name>` after the
-# bootstrap, which is shell-aware (lib/cli-install.sh + lib/tools-catalog.sh).
-# --system installs skip this filter — they serve all users on the box.
+# Shell-plugin filtering follows the invoking user's shell (USER_SHELL), in
+# both --user and --system mode. This avoids prompting a bash user for zsh
+# plugins (or vice versa) just because their host happens to default to a
+# different shell. ble.sh keeps a hard exclusion on macOS because its make
+# build needs gawk, which BSD awk on macOS isn't.
 tool_selected() {
   local name="$1"
   [ "$INSTALL_TOOLS" = none ] && return 1
-  if [ "$MODE" != system ]; then
-    case "$OS:$name" in
-      mac:ble.sh) return 1 ;;
-      linux:zsh-autosuggestions | linux:zsh-syntax-highlighting) return 1 ;;
-    esac
-  fi
-  # Allowlist: only members of TOOLS_ALLOW pass.
+  # Allowlist wins: when the user names a tool explicitly (--tools=NAME or
+  # `rec install NAME`), honor that and skip the shell/OS prompt filter —
+  # they opted in.
   if [ -n "$TOOLS_ALLOW" ]; then
     case ",$TOOLS_ALLOW," in
       *",$name,"*) return 0 ;;
       *) return 1 ;;
     esac
   fi
+  # No allowlist: hide shell plugins that don't fit the invoking user's
+  # shell so we don't prompt for things they can't realistically use.
+  case "$name" in
+    ble.sh)
+      [ "$USER_SHELL" = bash ] || return 1
+      [ "$OS" = mac ] && return 1
+      ;;
+    zsh-autosuggestions | zsh-syntax-highlighting)
+      [ "$USER_SHELL" = zsh ] || return 1
+      ;;
+  esac
   # Denylist: members of TOOLS_DENY are skipped.
   case ",$TOOLS_DENY," in
     *",$name,"*) return 1 ;;
@@ -866,17 +891,10 @@ maybe_multiselect_tools() {
   [ -r "$TARGET_DIR/lib/tools-catalog.sh" ] || return 0
 
   # rec_tools_missing filters by REC_SHELL_NAME (lib/tools-catalog.sh:111-122).
-  # Map OS to the shell whose plugins we want to OFFER, mirroring the same
-  # rule tool_selected enforces below:
-  #   mac   -> "zsh"  so ble.sh is filtered out, zsh-* are shown
-  #   linux -> "bash" so zsh-* are filtered out, ble.sh is shown
-  # In --system mode we want both plugin sets, so we skip the filter via a
-  # direct catalog walk.
-  case "$OS" in
-    mac) REC_SHELL_NAME=zsh ;;
-    linux) REC_SHELL_NAME=bash ;;
-    *) REC_SHELL_NAME=bash ;;
-  esac
+  # We key it off USER_SHELL — the invoking user's actual login shell — so
+  # the picker mirrors what tool_selected enforces below. Works for both
+  # --user and --system: zsh users only see zsh-*, bash users only see ble.sh.
+  REC_SHELL_NAME="$USER_SHELL"
   REC_SHELL_DIR="$TARGET_DIR"
   export REC_SHELL_NAME REC_SHELL_DIR
 
@@ -892,15 +910,7 @@ maybe_multiselect_tools() {
   . "$TARGET_DIR/lib/tools-catalog.sh" 2>/dev/null || return 0
 
   local _miss
-  if [ "$MODE" = system ]; then
-    # Both plugin sets in scope: catalog walk, skip already-present entries.
-    _miss="$(rec_tools_catalog | awk -F'|' 'NF { print $1 }' \
-      | while IFS= read -r _t; do
-          rec_tools_present "$_t" || printf '%s\n' "$_t"
-        done)"
-  else
-    _miss="$(rec_tools_missing | awk 'NF')"
-  fi
+  _miss="$(rec_tools_missing | awk 'NF')"
   if [ -z "$_miss" ]; then
     log 'All CLI tools already installed.'
     INSTALL_TOOLS=none

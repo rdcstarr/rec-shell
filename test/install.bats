@@ -361,19 +361,34 @@ EOF
   rm -rf "$T"
 }
 
-# OS-aware filtering for shell plugins: macOS users default to zsh, so the
-# bootstrap installer should never offer ble.sh on Darwin (its make build
-# requires gawk, which BSD awk on macOS isn't). zsh plugins remain on offer.
+# Shell-plugin filtering follows the *invoking user's* shell (USER_SHELL),
+# not the host OS. ble.sh keeps a hard exclusion on macOS because its build
+# is unreliable there (gawk dependency vs BSD awk).
 #
 # NOTE on assertion style: bats only treats the FINAL `[[ ]]` exit code as
 # the test result — intermediate `[[ ]]` failures are silently ignored. We
 # therefore use `grep -qx` (single-bracket-friendly) for each line check so
 # every assertion contributes to test pass/fail.
-@test "tool_selected skips ble.sh on macOS (user mode)" {
+@test "tool_selected (USER_SHELL=bash, linux, user): ble.sh on, zsh-* off" {
   run bash -c "
     REC_INSTALL_SOURCED=1
     . '$REPO_ROOT/install.sh'
-    OS=mac MODE=user
+    OS=linux MODE=user USER_SHELL=bash
+    if tool_selected ble.sh; then echo BLE_SELECTED; else echo BLE_SKIPPED; fi
+    if tool_selected zsh-autosuggestions; then echo ZSHAUTO_SELECTED; else echo ZSHAUTO_SKIPPED; fi
+    if tool_selected zsh-syntax-highlighting; then echo ZSHSYNTAX_SELECTED; else echo ZSHSYNTAX_SKIPPED; fi
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx BLE_SELECTED
+  printf '%s\n' "$output" | grep -qx ZSHAUTO_SKIPPED
+  printf '%s\n' "$output" | grep -qx ZSHSYNTAX_SKIPPED
+}
+
+@test "tool_selected (USER_SHELL=zsh, linux, user): zsh-* on, ble.sh off" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=linux MODE=user USER_SHELL=zsh
     if tool_selected ble.sh; then echo BLE_SELECTED; else echo BLE_SKIPPED; fi
     if tool_selected zsh-autosuggestions; then echo ZSHAUTO_SELECTED; else echo ZSHAUTO_SKIPPED; fi
   "
@@ -382,36 +397,82 @@ EOF
   printf '%s\n' "$output" | grep -qx ZSHAUTO_SELECTED
 }
 
-# Mirror on Linux: zsh plugins are filtered out (the default Linux user is on
-# bash); ble.sh remains on offer.
-@test "tool_selected skips zsh plugins on Linux (user mode)" {
+@test "tool_selected (USER_SHELL=zsh, mac, user): zsh-* on, ble.sh off" {
   run bash -c "
     REC_INSTALL_SOURCED=1
     . '$REPO_ROOT/install.sh'
-    OS=linux MODE=user
-    if tool_selected zsh-autosuggestions; then echo ZSHAUTO_SELECTED; else echo ZSHAUTO_SKIPPED; fi
-    if tool_selected zsh-syntax-highlighting; then echo ZSHSYNTAX_SELECTED; else echo ZSHSYNTAX_SKIPPED; fi
+    OS=mac MODE=user USER_SHELL=zsh
     if tool_selected ble.sh; then echo BLE_SELECTED; else echo BLE_SKIPPED; fi
+    if tool_selected zsh-autosuggestions; then echo ZSHAUTO_SELECTED; else echo ZSHAUTO_SKIPPED; fi
   "
   [ "$status" -eq 0 ]
-  printf '%s\n' "$output" | grep -qx ZSHAUTO_SKIPPED
-  printf '%s\n' "$output" | grep -qx ZSHSYNTAX_SKIPPED
-  printf '%s\n' "$output" | grep -qx BLE_SELECTED
+  printf '%s\n' "$output" | grep -qx BLE_SKIPPED
+  printf '%s\n' "$output" | grep -qx ZSHAUTO_SELECTED
 }
 
-# System installs serve multiple users on the same box, so the OS filter is
-# bypassed: every shell plugin is on offer regardless of host OS.
-@test "tool_selected bypasses OS filter in --system mode" {
+# macOS+bash: ble.sh is off by the macOS guard, zsh-* are off by shell mismatch.
+@test "tool_selected (USER_SHELL=bash, mac, user): ble.sh off (macOS guard), zsh-* off" {
   run bash -c "
     REC_INSTALL_SOURCED=1
     . '$REPO_ROOT/install.sh'
-    OS=mac MODE=system
+    OS=mac MODE=user USER_SHELL=bash
     if tool_selected ble.sh; then echo BLE_SELECTED; else echo BLE_SKIPPED; fi
     if tool_selected zsh-autosuggestions; then echo ZSHAUTO_SELECTED; else echo ZSHAUTO_SKIPPED; fi
   "
   [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx BLE_SKIPPED
+  printf '%s\n' "$output" | grep -qx ZSHAUTO_SKIPPED
+}
+
+# Regression: the user's bug — Linux + bash invoker + --system was offering
+# zsh plugins because the OS-based filter was bypassed in system mode.
+@test "tool_selected applies USER_SHELL filter even in --system mode" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    OS=linux MODE=system USER_SHELL=bash
+    if tool_selected ble.sh; then echo BLE_SELECTED; else echo BLE_SKIPPED; fi
+    if tool_selected zsh-autosuggestions; then echo ZSHAUTO_SELECTED; else echo ZSHAUTO_SKIPPED; fi
+    if tool_selected zsh-syntax-highlighting; then echo ZSHSYNTAX_SELECTED; else echo ZSHSYNTAX_SKIPPED; fi
+  "
+  [ "$status" -eq 0 ]
   printf '%s\n' "$output" | grep -qx BLE_SELECTED
-  printf '%s\n' "$output" | grep -qx ZSHAUTO_SELECTED
+  printf '%s\n' "$output" | grep -qx ZSHAUTO_SKIPPED
+  printf '%s\n' "$output" | grep -qx ZSHSYNTAX_SKIPPED
+}
+
+# Under `sudo`, $SHELL is unreliable (often points at root's shell or is
+# stripped by env_reset). The invoker's actual login shell lives in
+# /etc/passwd, lookup-able via `getent passwd $SUDO_USER`. Stub getent to
+# return a known shell and assert detect_user_shell prefers it.
+@test "detect_user_shell prefers SUDO_USER login shell via getent" {
+  cat >"$T/bin/getent" <<'EOF'
+#!/bin/sh
+# Only respond to "passwd alice"; everything else returns empty.
+if [ "$1" = passwd ] && [ "$2" = alice ]; then
+  printf 'alice:x:1000:1000::/home/alice:/usr/bin/zsh\n'
+fi
+EOF
+  chmod +x "$T/bin/getent"
+  run bash -c "
+    export PATH='$T/bin:/usr/bin:/bin'
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    SUDO_USER=alice SHELL=/bin/bash detect_user_shell
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx zsh
+}
+
+@test "detect_user_shell falls back to \$SHELL when no SUDO_USER" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    unset SUDO_USER
+    SHELL=/usr/bin/zsh detect_user_shell
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx zsh
 }
 
 # Regression: when ble.sh IS chosen (e.g. via `rec install ble.sh` on macOS,
@@ -475,7 +536,9 @@ EOF
     PATH='$T/bin:/usr/bin:/bin'
     REC_INSTALL_SOURCED=1
     . '$REPO_ROOT/install.sh'
-    OS=mac MODE=system UNATTENDED=1
+    # TOOLS_ALLOW=ble.sh models the explicit-opt-in path (e.g. \`rec install
+    # ble.sh\`), which bypasses tool_selected's prompt-only shell/OS filter.
+    OS=mac MODE=system UNATTENDED=1 TOOLS_ALLOW=ble.sh
     ensure_blesh
   "
   # ensure_blesh returns 1 on gawk-missing, so don't assert status == 0.
