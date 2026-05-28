@@ -120,20 +120,14 @@ case "$REC_SHELL_NAME" in
     # ble.sh's recommended bootstrap is two-phase: source with --noattach so
     # it just defines its functions (bleopt, ble-bind, …), then call
     # ble-attach AFTER any module that touches PS1/PROMPT_COMMAND has run.
+    # install.sh's pre-stub at the top of /etc/bash.bashrc absorbs the
+    # bleopt calls oh-my-posh's bash init emits before this loader runs.
     #
-    # Pre-define a no-op `bleopt` BEFORE sourcing ble.sh. ble.sh's source
-    # overwrites it with the real function at the appropriate line. The
-    # stub absorbs any premature `bleopt` calls that happen during the
-    # source/attach interleave with oh-my-posh's PROMPT_COMMAND wiring —
-    # those used to surface as `bash: bleopt: command not found` at every
-    # interactive shell startup. The stub is harmless: by the time anything
-    # important calls bleopt, ble.sh has redefined it.
-    # ble.sh's upstream-recommended pattern: source with --noattach so it
-    # just defines its functions, then call ble-attach AFTER any module
-    # that touches PS1/PROMPT_COMMAND has run. install.sh's pre-stub at
-    # the top of /etc/bash.bashrc absorbs the bleopt calls oh-my-posh's
-    # bash init emits before this loader runs.
-    if [ -r "$HOME/.local/share/blesh/ble.sh" ]; then
+    # Skip re-sourcing on `rec reload`. When ble.sh is sourced again while
+    # already attached, it prints "[ble: reload] / [ble: detached]" and
+    # leaves the tty in a state that needs `stty sane`. BLE_VERSION is
+    # ble.sh's "I'm loaded" marker — keep the existing instance.
+    if [ -z "${BLE_VERSION:-}" ] && [ -r "$HOME/.local/share/blesh/ble.sh" ]; then
       . "$HOME/.local/share/blesh/ble.sh" --noattach
       if [ -n "${BLE_VERSION:-}" ]; then
         PROMPT_COMMAND="ble-attach${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
