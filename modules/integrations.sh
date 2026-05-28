@@ -117,7 +117,18 @@ case "$REC_SHELL_NAME" in
       && . "$REC_SHELL_DIR/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
     ;;
   bash)
-    [ -r "$HOME/.local/share/blesh/ble.sh" ] && . "$HOME/.local/share/blesh/ble.sh"
+    # ble.sh's recommended bootstrap is two-phase: source with --noattach so
+    # it just defines its functions (bleopt, ble-bind, …), then call
+    # ble-attach AFTER any module that touches PS1/PROMPT_COMMAND has run.
+    # Sourcing without --noattach has been observed to print
+    # "bleopt: command not found" on Debian when ble.sh's eager init races
+    # the surrounding shell setup.
+    if [ -r "$HOME/.local/share/blesh/ble.sh" ]; then
+      . "$HOME/.local/share/blesh/ble.sh" --noattach
+      if [ -n "${BLE_VERSION:-}" ]; then
+        PROMPT_COMMAND="ble-attach${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+      fi
+    fi
     ;;
 esac
 
