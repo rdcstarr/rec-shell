@@ -12,6 +12,10 @@ set -eu
 PURGE=0
 [ "${1:-}" = "--purge" ] && PURGE=1
 MARKER="# rec-shell"
+# Prefix match — catches the loader line ("# rec-shell") AND any rec-shell
+# pre-stub block we prepend (e.g. "# rec-shell (pre-stub)"). Each block is
+# 2 lines: marker comment + the actual line.
+MARKER_PREFIX="# rec-shell"
 
 # --- pretty output (kept in sync with lib/ui.sh) ---------------------------
 if [ -n "${NO_COLOR+x}" ] || [ -n "${REC_NO_COLOR:-}" ]; then
@@ -51,15 +55,17 @@ skip() { printf '%s%s%s %s\n' "$C_Y" "$G_WARN" "$C_0" "$*" >&2; }
 strip_rc() {
   rc="$1"
   [ -f "$rc" ] || return 0
-  grep -qF "$MARKER" "$rc" 2>/dev/null || return 0
+  grep -qF "$MARKER_PREFIX" "$rc" 2>/dev/null || return 0
   if [ ! -w "$rc" ]; then
     skip "no write permission: $rc"
     return 0
   fi
   tmp="$rc.rec-uninstall.$$"
-  awk -v m="$MARKER" '$0 == m { drop = 2 } drop > 0 { drop--; next } { print }' "$rc" >"$tmp" \
+  # Match every line that STARTS with "# rec-shell" and drop it + the
+  # following line. Catches the loader block AND the bash pre-stub block.
+  awk -v p="$MARKER_PREFIX" 'index($0, p) == 1 { drop = 2 } drop > 0 { drop--; next } { print }' "$rc" >"$tmp" \
     && mv "$tmp" "$rc" \
-    && ok "removed loader line from $rc"
+    && ok "removed rec-shell lines from $rc"
 }
 
 for rc in "$HOME/.zshrc" "$HOME/.bashrc" /etc/zshrc /etc/zsh/zshrc /etc/bash.bashrc /etc/bashrc; do

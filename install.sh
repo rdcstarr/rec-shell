@@ -314,7 +314,7 @@ backup_once() {
 ensure_loader_in_rc() {
   local rc="$1" dir
   dir="$(line_dir_repr)"
-  if [ -f "$rc" ] && grep -qF "$MARKER" "$rc"; then
+  if [ -f "$rc" ] && grep -qF "$dir/rec-shell.sh\"" "$rc"; then
     log "Loader already present in $rc"
     return 0
   fi
@@ -326,6 +326,32 @@ ensure_loader_in_rc() {
   fi
   printf '%s\n[ -f "%s/rec-shell.sh" ] && . "%s/rec-shell.sh"\n' "$MARKER" "$dir" "$dir" >>"$rc"
   log "Added loader to $rc"
+}
+
+# Prepend a no-op `bleopt` stub at the TOP of bash rc files. oh-my-posh's
+# `init bash` output (often eval'd from /etc/bash.bashrc BEFORE our
+# loader's append-at-bottom runs) contains `bleopt prompt_ps1_transient=…`
+# and `bleopt prompt_ps1_final=…` calls that assume ble.sh is already
+# loaded. Without ble.sh those calls print "bash: bleopt: command not
+# found" at every interactive shell start. The stub silently absorbs them
+# until rec-shell loads ble.sh and overrides bleopt with the real function.
+# bash-only: zsh users don't run ble.sh and oh-my-posh's zsh init doesn't
+# emit bleopt calls.
+ensure_bleopt_prestub_in_rc() {
+  local rc="$1"
+  if [ -f "$rc" ] && grep -qF '# rec-shell (pre-stub)' "$rc"; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$rc")"
+  backup_once "$rc"
+  local tmp
+  tmp="$(mktemp "$rc.rec.XXXXXX" 2>/dev/null)" || tmp="$(mktemp -t rec-pre.XXXXXX)"
+  {
+    printf '# rec-shell (pre-stub)\nbleopt() { :; }\n'
+    [ -f "$rc" ] && cat "$rc"
+  } >"$tmp"
+  mv "$tmp" "$rc"
+  log "Prepended bleopt pre-stub to $rc"
 }
 
 system_rc_for() {
@@ -347,6 +373,9 @@ install_loader_lines() {
       [ "$s" = zsh ] && rc="$HOME/.zshrc" || rc="$HOME/.bashrc"
     fi
     [ -n "$rc" ] && ensure_loader_in_rc "$rc"
+    # Bash rc files also need the bleopt no-op at the top (see comment on
+    # ensure_bleopt_prestub_in_rc) to absorb oh-my-posh's pre-loader calls.
+    [ "$s" = bash ] && [ -n "$rc" ] && ensure_bleopt_prestub_in_rc "$rc"
   done
 }
 
