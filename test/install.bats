@@ -475,6 +475,50 @@ EOF
   printf '%s\n' "$output" | grep -qx zsh
 }
 
+# Regression: on macOS under \`sudo\`, getent doesn't exist and \$SHELL is
+# stripped by env_reset (often ends up /bin/sh from root's defaults). We
+# must fall back to \`dscl . -read /Users/$SUDO_USER UserShell\` to recover
+# the invoking user's actual shell — otherwise the installer treats them
+# as bash and skips the zsh plugins entirely.
+@test "detect_user_shell uses dscl on macOS when getent yields nothing" {
+  # Stub getent to fail (simulates 'not installed' on macOS).
+  cat >"$T/bin/getent" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+  chmod +x "$T/bin/getent"
+  # Stub dscl: respond to "-read /Users/alice UserShell".
+  cat >"$T/bin/dscl" <<'EOF'
+#!/bin/sh
+if [ "$1" = "." ] && [ "$2" = "-read" ] && [ "$3" = "/Users/alice" ] && [ "$4" = "UserShell" ]; then
+  printf 'UserShell: /bin/zsh\n'
+fi
+EOF
+  chmod +x "$T/bin/dscl"
+  run bash -c "
+    export PATH='$T/bin:/usr/bin:/bin'
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    SUDO_USER=alice SHELL=/bin/sh detect_user_shell
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx zsh
+}
+
+# Unknown shells (/bin/sh under sudo env_reset, exotic shells) should map
+# to bash defaults so SHELL_BIN doesn't show 'exec /bin/sh -l' in the
+# post-install hint.
+@test "detect_user_shell_path sanitizes unknown shells to /bin/bash" {
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    unset SUDO_USER
+    SHELL=/bin/sh detect_user_shell_path
+  "
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qx /bin/bash
+}
+
 # Regression: when ble.sh IS chosen (e.g. via `rec install ble.sh` on macOS,
 # or in --system mode) but gawk isn't on PATH, surface a clear, OS-specific
 # recommendation instead of letting `make` explode with the cryptic

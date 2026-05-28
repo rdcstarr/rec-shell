@@ -207,24 +207,37 @@ case "$(uname -s)" in
 esac
 
 # --- detect invoking user's shell ------------------------------------------
-# Under `sudo bash`, $SHELL is unreliable (env_reset strips it or it points
-# at root's shell). $SUDO_USER + `getent passwd` resolves to the *invoking*
-# user's login shell, which is what we want — the rec-shell loader will run
-# in their shell, not root's. Fallback to $SHELL covers non-sudo runs.
-# Tests can pin USER_SHELL directly via env.
-detect_user_shell() {
+# Under `sudo bash`, $SHELL is unreliable (env_reset strips it; on macOS it
+# often ends up /bin/sh from root's defaults). $SUDO_USER + the system's
+# passwd lookup resolves to the *invoking* user's login shell — Linux uses
+# `getent passwd`, macOS doesn't ship getent so we fall through to
+# `dscl . -read`. Final fallback to $SHELL covers non-sudo runs. Unknown
+# shells (e.g. /bin/sh) collapse to /bin/bash so the post-install hint
+# always recommends a real interactive shell. Tests can pin USER_SHELL /
+# USER_SHELL_PATH directly via env.
+detect_user_shell_path() {
   local sh=""
-  if [ -n "${SUDO_USER:-}" ] && command -v getent >/dev/null 2>&1; then
-    sh="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f7)"
+  if [ -n "${SUDO_USER:-}" ]; then
+    if [ -z "$sh" ] && command -v getent >/dev/null 2>&1; then
+      sh="$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f7)"
+    fi
+    if [ -z "$sh" ] && command -v dscl >/dev/null 2>&1; then
+      sh="$(dscl . -read "/Users/$SUDO_USER" UserShell 2>/dev/null | awk '/UserShell:/ { print $2 }')"
+    fi
   fi
   [ -z "$sh" ] && sh="${SHELL:-/bin/bash}"
   case "${sh##*/}" in
-    zsh) printf 'zsh\n' ;;
-    bash) printf 'bash\n' ;;
-    *) printf 'bash\n' ;;
+    zsh | bash) printf '%s\n' "$sh" ;;
+    *) printf '/bin/bash\n' ;;
   esac
 }
-USER_SHELL="${USER_SHELL:-$(detect_user_shell)}"
+detect_user_shell() {
+  local p
+  p="$(detect_user_shell_path)"
+  printf '%s\n' "${p##*/}"
+}
+USER_SHELL_PATH="${USER_SHELL_PATH:-$(detect_user_shell_path)}"
+USER_SHELL="${USER_SHELL:-${USER_SHELL_PATH##*/}}"
 
 # --- target dir + privileges ----------------------------------------------
 if [ "$MODE" = system ]; then
@@ -974,21 +987,20 @@ ensure_omp
 ensure_zoxide
 install_tools_all
 
-# Pick the rc file the user's *current* shell will pick up on a fresh start.
-# Falls back to bash when $SHELL is unset (e.g. minimal cloud images).
+# Pick the rc file the user's *current* shell will pick up on a fresh
+# start. Keys off USER_SHELL (the invoking user's actual shell) rather
+# than raw $SHELL — under `sudo` that one's been stripped to /bin/sh on
+# macOS and would otherwise point users at the wrong rc file.
 post_install_rc_hint() {
-  local shell_bin="${SHELL:-/bin/bash}"
-  local shell_name="${shell_bin##*/}"
-  case "$shell_name" in
+  case "$USER_SHELL" in
     zsh) [ "$MODE" = system ] && system_rc_for zsh || printf '%s/.zshrc' "$HOME" ;;
-    bash) [ "$MODE" = system ] && system_rc_for bash || printf '%s/.bashrc' "$HOME" ;;
     *) [ "$MODE" = system ] && system_rc_for bash || printf '%s/.bashrc' "$HOME" ;;
   esac
 }
 
 VER="$(head -n1 "$TARGET_DIR/VERSION" 2>/dev/null || echo '?')"
 RC_HINT="$(post_install_rc_hint)"
-SHELL_BIN="${SHELL:-/bin/bash}"
+SHELL_BIN="$USER_SHELL_PATH"
 
 printf '\n'
 ok "rec-shell $VER installed."
