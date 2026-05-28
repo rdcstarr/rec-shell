@@ -56,6 +56,7 @@ Commands:
   (no arg)        Interactive picker (up/down, enter connect, f favorite, a add)
   <alias> [args]  Connect to a host (ssh <alias>); records usage for sorting
   add [...]       Add a host to ~/.ssh/config (--alias= --host= --user= --port= --key=)
+                  Inserts above a '# rec:global' marker line if present, else appends.
   fav [alias]     Toggle a favorite (no arg: pick favorites interactively)
   edit [--code]   Open ~/.ssh/config in your editor (or VS Code with --code)
   list            List hosts (favorites first, then most-accessed)
@@ -358,19 +359,94 @@ __rec_ssh_add() {
     : >"$HOME/.ssh/config"
     chmod 600 "$HOME/.ssh/config" 2>/dev/null
   fi
-  {
-    printf '\n'
-    printf 'Host %s\n' "$name"
-    printf '    HostName %s\n' "$host"
-    [ -n "$user" ] && printf '    User %s\n' "$user"
-    printf '    Port %s\n' "$port"
-    [ -n "$key" ] && printf '    IdentityFile %s\n' "$key"
-  } >>"$HOME/.ssh/config"
+
+  __rec_ssh_write_host "$name" "$host" "$user" "$port" "$key"
+  case "$?" in
+    0) ;;
+    1) __rec_ssh_global_hint_maybe ;;
+    *)
+      rec_ui_err "failed to update ~/.ssh/config"
+      return 1
+      ;;
+  esac
   rec_ui_ok "Added host \"$name\" ($(__rec_ssh_fmt_target "$host" "$user" "$port" "$name"))."
 
   if rec_ui_interactive_load && rec_ui_confirm "Connect to $name now?" no; then
     __rec_ssh_bump "$name"
     __rec_ssh_connect "$name"
+  fi
+}
+
+# __rec_ssh_write_host NAME HOST USER PORT KEY
+#
+# Insert a new Host block into ~/.ssh/config. If the file contains the marker
+# line `# rec:global` (deasupra blocului `Host *` global), insert the block
+# imediat înainte de marker. Otherwise append at EOF (legacy behavior).
+#
+# Returns: 0 = inserted before marker, 1 = appended at EOF, 2 = I/O error.
+__rec_ssh_write_host() {
+  local name="$1" host="$2" user="$3" port="$4" key="$5"
+  local config="$HOME/.ssh/config"
+  local tmp marker_line before_count
+
+  tmp="$(mktemp "${config}.XXXXXX")" || return 2
+
+  marker_line="$(awk '/^[[:space:]]*#[[:space:]]*rec:global[[:space:]]*$/ {print NR; exit}' "$config" 2>/dev/null)"
+
+  if [ -n "$marker_line" ]; then
+    before_count=$((marker_line - 1))
+    {
+      if [ "$before_count" -gt 0 ]; then head -n "$before_count" "$config"; fi
+      printf '\n'
+      printf 'Host %s\n' "$name"
+      printf '    HostName %s\n' "$host"
+      if [ -n "$user" ]; then printf '    User %s\n' "$user"; fi
+      printf '    Port %s\n' "$port"
+      if [ -n "$key" ];  then printf '    IdentityFile %s\n' "$key"; fi
+      printf '\n'
+      tail -n +"$marker_line" "$config"
+    } >"$tmp" || { rm -f "$tmp"; return 2; }
+  else
+    {
+      cat "$config"
+      printf '\n'
+      printf 'Host %s\n' "$name"
+      printf '    HostName %s\n' "$host"
+      if [ -n "$user" ]; then printf '    User %s\n' "$user"; fi
+      printf '    Port %s\n' "$port"
+      if [ -n "$key" ];  then printf '    IdentityFile %s\n' "$key"; fi
+    } >"$tmp" || { rm -f "$tmp"; return 2; }
+  fi
+
+  chmod 600 "$tmp" 2>/dev/null
+  mv -f "$tmp" "$config" || { rm -f "$tmp"; return 2; }
+
+  [ -n "$marker_line" ]
+}
+
+# __rec_ssh_global_hint_maybe
+#
+# If ~/.ssh/config has a wildcard `Host` (containing *, ?, !) or a `Match`
+# block but no `# rec:global` marker, print a one-time hint explaining the
+# marker. Sentinel kept under $REC_CONFIG_DIR so we don't re-nag.
+__rec_ssh_global_hint_maybe() {
+  local sentinel="$REC_CONFIG_DIR/ssh-global-hint-shown"
+  [ -e "$sentinel" ] && return 0
+
+  local config="$HOME/.ssh/config"
+  [ -r "$config" ] || return 0
+
+  if awk '
+      BEGIN { found = 0 }
+      /^[[:space:]]*[Hh]ost[[:space:]]/ {
+        for (i = 2; i <= NF; i++) if ($i ~ /[*?!]/) { found = 1; exit }
+      }
+      /^[[:space:]]*[Mm]atch[[:space:]]/ { found = 1; exit }
+      END { exit (found ? 0 : 1) }
+    ' "$config"; then
+    rec_ui_note "Hint: add '# rec:global' above your wildcard Host/Match block so future 'rec ssh add' inserts above it."
+    command mkdir -p "$REC_CONFIG_DIR" 2>/dev/null
+    : >"$sentinel" 2>/dev/null
   fi
 }
 
