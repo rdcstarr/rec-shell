@@ -234,6 +234,97 @@ __rec_whois_kv_date() {
 }
 
 # rec whois domain <domain>
+# __rec_whois_rdap_domain DOMAIN -> query rdap.org for DOMAIN, parse the
+# JSON, and emit it in the same UI shape as the whois path. Returns 0 on
+# success (RDAP responded with valid JSON we could parse), 1 otherwise.
+#
+# Required for new gTLDs that dropped whois entirely (.dev, .app, .page,
+# .new, …) — IANA's bootstrap shows their `whois:` field empty; whois
+# clients with hardcoded `whois.nic.<tld>` mappings fail with NXDOMAIN.
+__rec_whois_rdap_domain() {
+  _rwr_domain="$1"
+  rec_have python3 || rec_have python || return 1
+  _rwr_py="$(rec_have python3 && echo python3 || echo python)"
+  _rwr_json="$(curl -fsSL --max-time 10 "https://rdap.org/domain/$_rwr_domain" 2>/dev/null)"
+  [ -z "$_rwr_json" ] && return 1
+  # One-shot parse: emit `key<TAB>value` lines for the fields we care
+  # about, then read them back. Returns rc=1 if the JSON isn't a domain
+  # response (e.g. error envelope).
+  _rwr_kv="$(printf '%s' "$_rwr_json" | "$_rwr_py" -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if d.get("objectClassName") != "domain":
+    sys.exit(1)
+def vcard_fn(entity):
+    for item in (entity.get("vcardArray") or [None, []])[1]:
+        if isinstance(item, list) and item and item[0] == "fn":
+            return item[3] if len(item) > 3 else ""
+    return ""
+print("ldh\t" + (d.get("ldhName") or ""))
+for ent in d.get("entities") or []:
+    if "registrar" in (ent.get("roles") or []):
+        print("registrar\t" + vcard_fn(ent))
+        break
+for ev in d.get("events") or []:
+    act = ev.get("eventAction") or ""
+    when = ev.get("eventDate") or ""
+    if act == "registration": print("created\t" + when)
+    elif act == "expiration": print("expires\t" + when)
+    elif act in ("last changed", "last update of RDAP database"): print("updated\t" + when)
+for s in d.get("status") or []:
+    print("status\t" + s)
+for ns in d.get("nameservers") or []:
+    nm = ns.get("ldhName") or ""
+    if nm: print("ns\t" + nm.lower())
+sd = d.get("secureDNS") or {}
+if "delegationSigned" in sd:
+    print("dnssec\t" + ("signed" if sd.get("delegationSigned") else "unsigned"))
+' 2>/dev/null)"
+  [ -z "$_rwr_kv" ] && return 1
+
+  rec_ui_heading "WHOIS: $_rwr_domain"
+  rec_ui_kv target "$_rwr_domain"
+  rec_ui_note "source:    RDAP (rdap.org)"
+
+  _rwr_registrar="$(printf '%s\n' "$_rwr_kv" | awk -F'\t' '$1=="registrar"{print $2; exit}')"
+  _rwr_created="$(printf '%s\n' "$_rwr_kv" | awk -F'\t' '$1=="created"{print $2; exit}')"
+  _rwr_updated="$(printf '%s\n' "$_rwr_kv" | awk -F'\t' '$1=="updated"{print $2; exit}')"
+  _rwr_expires="$(printf '%s\n' "$_rwr_kv" | awk -F'\t' '$1=="expires"{print $2; exit}')"
+  _rwr_dnssec="$(printf '%s\n' "$_rwr_kv" | awk -F'\t' '$1=="dnssec"{print $2; exit}')"
+  [ -n "$_rwr_registrar" ] && rec_ui_kv registrar "$_rwr_registrar"
+  [ -n "$_rwr_created" ] && __rec_whois_kv_date created "$_rwr_created" created
+  [ -n "$_rwr_updated" ] && __rec_whois_kv_date updated "$_rwr_updated" updated
+  [ -n "$_rwr_expires" ] && __rec_whois_kv_date expires "$_rwr_expires" expires
+  [ -n "$_rwr_dnssec" ] && rec_ui_kv dnssec "$_rwr_dnssec"
+
+  _rwr_first=1
+  printf '%s\n' "$_rwr_kv" | awk -F'\t' '$1=="status"{print $2}' | while IFS= read -r _rwr_s; do
+    [ -z "$_rwr_s" ] && continue
+    if [ "$_rwr_first" -eq 1 ]; then
+      rec_ui_kv status "$_rwr_s"
+      _rwr_first=0
+    else
+      __rec_whois_kv_cont "$_rwr_s"
+    fi
+  done
+
+  _rwr_first=1
+  printf '%s\n' "$_rwr_kv" | awk -F'\t' '$1=="ns"{print $2}' | while IFS= read -r _rwr_n; do
+    [ -z "$_rwr_n" ] && continue
+    if [ "$_rwr_first" -eq 1 ]; then
+      rec_ui_kv ns "$_rwr_n"
+      _rwr_first=0
+    else
+      __rec_whois_kv_cont "$_rwr_n"
+    fi
+  done
+  unset _rwr_domain _rwr_py _rwr_json _rwr_kv _rwr_registrar _rwr_created _rwr_updated _rwr_expires _rwr_dnssec _rwr_first _rwr_s _rwr_n
+  return 0
+}
+
 __rec_whois_domain() {
   _rwd_domain="$1"
   if ! rec_have whois; then
@@ -250,6 +341,15 @@ __rec_whois_domain() {
   _rwd_err="$(mktemp 2>/dev/null || mktemp -t rec-whois.XXXXXX)"
   _rwd_out="$(whois -- "$_rwd_domain" 2>"$_rwd_err")" || _rwd_out=""
   if [ -z "$_rwd_out" ]; then
+    # Whois failed or returned nothing. Try the RDAP fallback — newer
+    # gTLDs like .dev / .app / .page are RDAP-only (IANA shows their
+    # whois field as empty; the stale `whois.nic.<tld>` hostname some
+    # whois packages hardcode doesn't exist). rdap.org is a public
+    # bootstrap aggregator that redirects to the correct RDAP server.
+    if rec_have curl && __rec_whois_rdap_domain "$_rwd_domain"; then
+      rm -f "$_rwd_err"
+      return 0
+    fi
     if [ -s "$_rwd_err" ]; then
       rec_ui_err "whois lookup failed for '$_rwd_domain':"
       sed 's/^/  /' "$_rwd_err" >&2
