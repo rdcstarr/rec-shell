@@ -385,6 +385,17 @@ install_loader_lines() {
     # ensure_bleopt_prestub_in_rc) to absorb oh-my-posh's pre-loader calls.
     [ "$s" = bash ] && [ -n "$rc" ] && ensure_bleopt_prestub_in_rc "$rc"
   done
+  # User-mode bash: login shells source ~/.bash_profile / ~/.bash_login /
+  # ~/.profile (first one that exists) and may or may not chain on to
+  # ~/.bashrc. To guarantee `rec` works after `exec $SHELL -l`, also
+  # write the loader to whichever login-shell rc file exists. The
+  # REC_SHELL_LOADED guard in rec-shell.sh makes the second sourcing a
+  # no-op when both files are read.
+  if [ "$MODE" != system ] && command -v bash >/dev/null 2>&1; then
+    for rc in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+      [ -f "$rc" ] && ensure_loader_in_rc "$rc" && break
+    done
+  fi
 }
 
 # /etc/profile.d covers login shells (bash, sh, and zsh on most distros) that
@@ -501,34 +512,36 @@ tool_selected() {
 }
 
 # pm_install PKG... -> install via the first available package manager.
-# Returns 1 when no PM is found or the install fails.
+# Returns 1 when no PM is found, the install fails, or (in user mode on
+# Linux) sudo refuses non-interactive auth — without trying sudo more
+# than once, so we don't dump "sudo: interactive authentication is
+# required" mid-install. Callers are expected to surface an actionable
+# message in that case (see ensure_blesh's dep loop).
 pm_install() {
   if command -v brew >/dev/null 2>&1; then
     brew install "$@" && return 0
-  elif command -v apt-get >/dev/null 2>&1; then
-    if [ "$(id -u)" -eq 0 ]; then
-      apt-get update -qq && apt-get install -y "$@" && return 0
+    return 1
+  fi
+  # Linux PMs: same shape — root runs the tool directly; otherwise check
+  # once if `sudo -n` works (passwordless sudo configured), bail fast if
+  # not, and only THEN run the install via sudo. Avoids the multi-line
+  # "interactive authentication is required" noise in user installs.
+  local _pmi_sudo=""
+  if [ "$(id -u)" -ne 0 ]; then
+    if sudo -n true 2>/dev/null; then
+      _pmi_sudo="sudo -n"
     else
-      sudo -n apt-get update -qq && sudo -n apt-get install -y "$@" && return 0
+      return 1
     fi
+  fi
+  if command -v apt-get >/dev/null 2>&1; then
+    $_pmi_sudo apt-get update -qq && $_pmi_sudo apt-get install -y "$@" && return 0
   elif command -v dnf >/dev/null 2>&1; then
-    if [ "$(id -u)" -eq 0 ]; then
-      dnf install -y "$@" && return 0
-    else
-      sudo -n dnf install -y "$@" && return 0
-    fi
+    $_pmi_sudo dnf install -y "$@" && return 0
   elif command -v pacman >/dev/null 2>&1; then
-    if [ "$(id -u)" -eq 0 ]; then
-      pacman -S --noconfirm "$@" && return 0
-    else
-      sudo -n pacman -S --noconfirm "$@" && return 0
-    fi
+    $_pmi_sudo pacman -S --noconfirm "$@" && return 0
   elif command -v apk >/dev/null 2>&1; then
-    if [ "$(id -u)" -eq 0 ]; then
-      apk add --no-cache "$@" && return 0
-    else
-      sudo -n apk add --no-cache "$@" && return 0
-    fi
+    $_pmi_sudo apk add --no-cache "$@" && return 0
   fi
   return 1
 }

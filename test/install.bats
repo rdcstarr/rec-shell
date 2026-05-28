@@ -794,6 +794,64 @@ EOF
 # after every apt-get install. NEEDRESTART_MODE=l (list-only) + SUSPEND=1
 # silence it. install.sh exports these at script top so every pm_install
 # inherits them.
+# Regression: in user mode (no sudo), pm_install used to call \`sudo -n\`
+# which dumped "sudo: interactive authentication is required" to stderr
+# per dep. Now we probe sudo-n upfront and bail clean if it can't run
+# unattended — callers (ensure_blesh) then surface their actionable
+# warning instead.
+@test "pm_install: bails clean when non-root and sudo -n fails" {
+  T="$(mktemp -d)"
+  mkdir -p "$T/bin"
+  # Stub apt-get so the apt path is taken if we get that far (we won't).
+  printf '#!/bin/sh\nexit 0\n' >"$T/bin/apt-get"
+  chmod +x "$T/bin/apt-get"
+  # Stub sudo to always fail (mimics no passwordless config).
+  printf '#!/bin/sh\nexit 1\n' >"$T/bin/sudo"
+  chmod +x "$T/bin/sudo"
+  run bash -c "
+    PATH='$T/bin:/usr/bin:/bin'
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    # Override id so we're 'not root' for the purposes of pm_install.
+    id() { [ \"\$1\" = -u ] && echo 1000 || builtin command id \"\$@\"; }
+    if pm_install make 2>&1; then rc=0; else rc=\$?; fi
+    echo rc=\$rc
+  "
+  printf '%s\n' "$output" | grep -qx 'rc=1'
+  # And we must NOT have dumped any sudo error messages.
+  ! printf '%s\n' "$output" | grep -qi 'interactive authentication'
+  rm -rf "$T"
+}
+
+# Regression: on Ubuntu, user-mode install added the loader only to
+# ~/.bashrc, but login bash sources ~/.bash_profile / ~/.profile, neither
+# of which always chains to ~/.bashrc. Result: \`rec\` not found after
+# \`exec \$SHELL -l\`. install_loader_lines now also writes the loader
+# to whichever login-shell rc file exists.
+@test "install_loader_lines: user mode also writes loader to existing ~/.profile" {
+  T="$(mktemp -d)"
+  HOME_T="$T/home"
+  mkdir -p "$HOME_T"
+  : >"$HOME_T/.bashrc"
+  : >"$HOME_T/.profile"
+  # No ~/.bash_profile, no ~/.bash_login, so the loop should pick .profile.
+  run bash -c "
+    REC_INSTALL_SOURCED=1
+    . '$REPO_ROOT/install.sh'
+    HOME='$HOME_T' MODE=user TARGET_DIR='$HOME_T/.rec-shell'
+    install_loader_lines
+    echo === bashrc ===
+    cat '$HOME_T/.bashrc'
+    echo === profile ===
+    cat '$HOME_T/.profile'
+  "
+  printf '%s\n' "$output" | grep -q "rec-shell.sh"
+  # Both files should now have the loader line.
+  grep -q 'rec-shell.sh' "$HOME_T/.bashrc"
+  grep -q 'rec-shell.sh' "$HOME_T/.profile"
+  rm -rf "$T"
+}
+
 @test "install.sh sets NEEDRESTART_MODE and NEEDRESTART_SUSPEND" {
   run bash -c "
     REC_INSTALL_SOURCED=1
