@@ -957,21 +957,24 @@ maybe_multiselect_tools() {
   set -- $_miss
   IFS="$_oldIFS"
 
-  # Under `curl -fsSL ... | bash`, stdin is the pipe and stderr is the
-  # user's terminal. rec_ui_multiselect (lib/ui-interactive.sh:241) refuses
-  # to draw unless both stdin AND stderr are TTYs (__rec_ui_interactive,
-  # lib/ui-interactive.sh:22-29). Probe with stdin redirected to /dev/tty
-  # before invoking — if the probe still fails, we fall through to the
-  # per-tool confirm() flow (confirm() reads from /dev/tty directly and
-  # works fine under curl|bash). Same `</dev/tty` redirect on the actual
-  # call so __rec_ui_readkey sees a real terminal.
-  # sudo's env_reset also strips TERM, which __rec_ui_interactive rejects;
-  # default it back to xterm-256color so the picker can actually render.
+  # Under `curl -fsSL ... | sudo bash`, several env hostilities stack up
+  # and we have to neutralise each one or the picker silently bails:
+  #   - stdin is the curl pipe (not a TTY) — redirect from /dev/tty.
+  #   - sudo with `use_pty` (Debian default since bookworm) attaches the
+  #     child's stdout/stderr to its own pty, so `[ -t 2 ]` in the child
+  #     returns false and __rec_ui_interactive rejects the run. Redirect
+  #     stderr to /dev/tty as well so the probe sees a real terminal AND
+  #     the picker's drawing (which writes to fd 2) actually lands on
+  #     the user's screen.
+  #   - sudo's env_reset strips TERM, which __rec_ui_interactive also
+  #     rejects when empty — __rec_default_term plugs in a default.
+  # If anything still fails (no /dev/tty in a sandboxed CI), we fall
+  # through to the per-tool confirm() flow which reads /dev/tty directly.
   __rec_default_term
-  if ! __rec_ui_interactive <"$_tty_dev" 2>/dev/null; then
+  if ! __rec_ui_interactive <"$_tty_dev" 2>"$_tty_dev"; then
     return 0
   fi
-  rec_ui_multiselect "Pick CLI tools to install (space=toggle, a=all, enter=confirm)" "$@" <"$_tty_dev" >/dev/null || return 0
+  rec_ui_multiselect "Pick CLI tools to install (space=toggle, a=all, enter=confirm)" "$@" <"$_tty_dev" 2>"$_tty_dev" >/dev/null || return 0
   if [ -z "${REC_UI_REPLY:-}" ]; then
     INSTALL_TOOLS=none
     log 'Nothing selected — skipping CLI tools.'
