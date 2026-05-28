@@ -131,6 +131,14 @@ case "$REC_SHELL_NAME" in
       . "$HOME/.local/share/blesh/ble.sh" --noattach
       if [ -n "${BLE_VERSION:-}" ]; then
         PROMPT_COMMAND="ble-attach${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+        # Disable oh-my-posh's transient-prompt → ble.sh integration. Our
+        # bundled `recweb` theme has no `transient_prompt` block, so its
+        # `oh-my-posh print transient` output is empty; with
+        # prompt_ps1_transient=always (which oh-my-posh init.NNN.sh ends
+        # with), ble.sh swaps every prior prompt to that empty string
+        # and the OS/host/path header disappears after each command.
+        # Clear both to keep the full prompt visible on every line.
+        bleopt prompt_ps1_transient= prompt_ps1_final= 2>/dev/null || true
       fi
     fi
     ;;
