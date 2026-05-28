@@ -129,23 +129,43 @@ case "$REC_SHELL_NAME" in
     # interactive shell startup. The stub is harmless: by the time anything
     # important calls bleopt, ble.sh has redefined it.
     if [ -r "$HOME/.local/share/blesh/ble.sh" ]; then
-      # DIAGNOSTIC (v1.8.2 only): a tracing stub so we can see WHO is calling
-      # bleopt before/instead of ble.sh's own definition. Replaces the silent
-      # no-op from v1.8.1. The next release reverts this to either the silent
-      # stub or removes it entirely once we know the source.
-      bleopt() {
-        {
-          printf '[BLEOPT_TRACE] args=[%s]\n' "$*"
-          printf '[BLEOPT_TRACE] BASH_SOURCE=[%s]\n' "${BASH_SOURCE[*]}"
-          printf '[BLEOPT_TRACE] FUNCNAME=[%s]\n' "${FUNCNAME[*]}"
-          printf '[BLEOPT_TRACE] caller=[%s]\n' "$(caller 2>/dev/null)"
-        } >&2
-        return 0
-      }
       . "$HOME/.local/share/blesh/ble.sh" --noattach
       if [ -n "${BLE_VERSION:-}" ]; then
         PROMPT_COMMAND="ble-attach${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
       fi
+      # `bleopt` is defined as a function by ble.sh in the main shell.
+      # Diagnostic on the v1.8.2 user trace confirmed: `declare -F bleopt`
+      # returns the name AND a function stub around it never fires, yet
+      # bash still prints "bash: bleopt: command not found" twice at every
+      # interactive shell startup. That pattern means bleopt is being
+      # invoked in a SUBSHELL (command substitution / pipeline) that didn't
+      # inherit the function — bash functions don't cross subshell
+      # boundaries unless exported. Two layers of defense:
+      #   1. export -f the function so subshells inherit it.
+      #   2. Hook command_not_found_handle to silently absorb any bleopt
+      #      that still slips through (and log the caller location to
+      #      /tmp/rec-bleopt-trace.log so we can chase it down later).
+      if declare -F bleopt >/dev/null 2>&1; then
+        export -f bleopt 2>/dev/null
+      fi
+      __rec_orig_cnfh=$(declare -f command_not_found_handle 2>/dev/null)
+      command_not_found_handle() {
+        if [ "$1" = bleopt ]; then
+          {
+            printf '[%s] bleopt called via CNFH\n' "$(date +%H:%M:%S)"
+            printf '  FUNCNAME=[%s]\n' "${FUNCNAME[*]:-MAIN}"
+            printf '  BASH_SOURCE=[%s]\n' "${BASH_SOURCE[*]:-NONE}"
+            printf '  BASH_LINENO=[%s]\n' "${BASH_LINENO[*]:-NONE}"
+          } >>/tmp/rec-bleopt-trace.log 2>/dev/null
+          return 0
+        fi
+        if [ -n "${__rec_orig_cnfh:-}" ]; then
+          eval "$__rec_orig_cnfh"
+          command_not_found_handle "$@"
+        else
+          return 127
+        fi
+      }
     fi
     ;;
 esac
