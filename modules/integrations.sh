@@ -129,7 +129,19 @@ case "$REC_SHELL_NAME" in
     # interactive shell startup. The stub is harmless: by the time anything
     # important calls bleopt, ble.sh has redefined it.
     if [ -r "$HOME/.local/share/blesh/ble.sh" ]; then
-      bleopt() { :; }
+      # DIAGNOSTIC (v1.8.2 only): a tracing stub so we can see WHO is calling
+      # bleopt before/instead of ble.sh's own definition. Replaces the silent
+      # no-op from v1.8.1. The next release reverts this to either the silent
+      # stub or removes it entirely once we know the source.
+      bleopt() {
+        {
+          printf '[BLEOPT_TRACE] args=[%s]\n' "$*"
+          printf '[BLEOPT_TRACE] BASH_SOURCE=[%s]\n' "${BASH_SOURCE[*]}"
+          printf '[BLEOPT_TRACE] FUNCNAME=[%s]\n' "${FUNCNAME[*]}"
+          printf '[BLEOPT_TRACE] caller=[%s]\n' "$(caller 2>/dev/null)"
+        } >&2
+        return 0
+      }
       . "$HOME/.local/share/blesh/ble.sh" --noattach
       if [ -n "${BLE_VERSION:-}" ]; then
         PROMPT_COMMAND="ble-attach${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
