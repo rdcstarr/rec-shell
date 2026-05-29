@@ -112,6 +112,12 @@ __rec_whois_field() {
     | tr -d '\r'
 }
 
+# Read whois output text from stdin; return 0 if the response uses any of the
+# common "domain is not registered" phrasings. Shared with cli-domain.sh.
+__rec_whois_text_says_available() {
+  grep -i -E -q 'No match for|NOT FOUND|No Data Found|Domain not found|is free|No entries found|Status: *AVAILABLE|Status: *free'
+}
+
 # Extract ALL values for a field, one per line.
 __rec_whois_field_all() {
   printf '%s\n' "$1" \
@@ -365,8 +371,7 @@ __rec_whois_domain() {
   rec_ui_kv target "$_rwd_domain"
 
   # Availability detection — common phrasings across registries.
-  if printf '%s\n' "$_rwd_out" \
-    | grep -i -E -q 'No match for|NOT FOUND|No Data Found|Domain not found|is free|No entries found|Status: *AVAILABLE|Status: *free'; then
+  if printf '%s\n' "$_rwd_out" | __rec_whois_text_says_available; then
     rec_ui_ok "status:    AVAILABLE (no registration record found)"
     return 0
   fi

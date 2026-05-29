@@ -28,6 +28,7 @@ __rec_dispatch() {
     backup) __rec_cmd_backup "$@" ;;
     ip) __rec_cmd_ip "$@" ;;
     whois) __rec_cmd_whois "$@" ;;
+    domain) __rec_cmd_domain "$@" ;;
     dns) __rec_cmd_dns "$@" ;;
     install) __rec_cmd_install "$@" ;;
     password | passwd | pw) __rec_cmd_password "$@" ;;
@@ -493,6 +494,24 @@ __rec_cmd_whois() {
   __rec_whois_dispatch "$@"
 }
 
+# `rec domain check / scan` group: domain availability lookup and bulk
+# enumeration of free domains on a TLD. Sources cli-whois.sh first because
+# it reuses __rec_whois_text_says_available and __rec_whois_rdap_domain.
+__rec_cmd_domain() {
+  if ! command -v __rec_domain_dispatch >/dev/null 2>&1; then
+    if [ -r "$REC_SHELL_DIR/lib/cli-whois.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-whois.sh"
+    fi
+    if [ -r "$REC_SHELL_DIR/lib/cli-domain.sh" ]; then
+      . "$REC_SHELL_DIR/lib/cli-domain.sh"
+    else
+      rec_ui_err 'domain commands unavailable (missing lib/cli-domain.sh)'
+      return 1
+    fi
+  fi
+  __rec_domain_dispatch "$@"
+}
+
 __rec_cmd_dns() {
   if ! command -v __rec_dns_dispatch >/dev/null 2>&1; then
     if [ -r "$REC_SHELL_DIR/lib/cli-dns.sh" ]; then
@@ -577,6 +596,7 @@ __rec_cmd_help() {
   __rec_help_row "backup <cmd>" "Directory snapshots: create, list, restore, prune"
   __rec_help_row "ip [command]" "IP address: public (default), local, all"
   __rec_help_row "whois <target>" "Whois lookup for a domain or IP (+geo, PTR)"
+  __rec_help_row "domain <cmd>" "Domain availability: check <name>, scan <tld> --len N"
   __rec_help_row "dns <domain>" "DNS records: A, AAAA, MX, NS, TXT, CNAME, SOA"
   __rec_help_row "install [tool]" "Install modern CLI tools (interactive picker)"
   __rec_help_row "password" "Strong password generator (-> clipboard)"
@@ -616,6 +636,7 @@ __rec_cmd_menu() {
     'backup    - directory snapshots (create/list/restore)' \
     'ip        - IP address (public/local/all)' \
     'whois     - whois lookup (domain or IP)' \
+    'domain    - domain availability (check / scan)' \
     'dns       - DNS records (A/AAAA/MX/NS/TXT/CNAME/SOA)' \
     'install   - install modern CLI tools (interactive picker)' \
     'password  - strong password generator' \

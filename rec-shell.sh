@@ -100,6 +100,7 @@ __rec_unset_lazy_dispatchers() {
     __rec_port_dispatch __rec_sys_dispatch __rec_systemd_dispatch \
     __rec_backup_dispatch __rec_ip_dispatch \
     __rec_whois_dispatch __rec_dns_dispatch \
+    __rec_domain_dispatch \
     __rec_install_dispatch \
     __rec_password_dispatch \
     __rec_tips_dispatch __rec_cheat_dispatch 2>/dev/null
