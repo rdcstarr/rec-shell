@@ -548,11 +548,10 @@ __rec_domain_scan_run() {
         [ -z "$_rd_c" ] && continue
         printf '%s\t%s\t%s\n' "$_rd_c" "$_rd_st" "$_rd_src" >>"$_RD_STATE_FILE"
         if [ "$_rd_st" = AVAILABLE ]; then
-          # Wipe the bottom progress bar so the result prints on a clean
-          # line, then let the next bar redraw float below it (scrolling-log
-          # over a pinned bar). Only when both streams are the same TTY.
-          if [ -t 1 ] && [ -t 2 ]; then printf '\r\033[2K' >&2; fi
-          __rec_domain_emit_available "$_rd_c.$_RD_TLD"
+          # Don't stream results during the scan — the progress bar (with its
+          # live ✓ count) is the only on-screen output. The full list is
+          # printed once at the end by __rec_domain_summary; --out still gets
+          # each name as it lands so a long scan can be tailed from a file.
           [ -n "$_RD_OUT" ] && printf '%s\n' "$_rd_c.$_RD_TLD" >>"$_RD_OUT"
           _rd_found=$((_rd_found + 1))
         fi
@@ -633,24 +632,31 @@ __rec_domain_summary() {
   printf '\n'
   if [ "$_rds_kind" = "interrupted" ]; then
     rec_ui_warn "Interrupted. $_rds_done/$_RD_TOTAL processed, $_rds_avail available so far."
+    __rec_domain_list_available "$_rds_avail"
     rec_ui_step "resume: rec domain scan $_RD_TLD --len $_RD_LEN --alphabet \"$_RD_ALPHABET_SPEC\""
   else
     rec_ui_ok "Done. $_rds_done/$_RD_TOTAL processed — available: $_rds_avail, registered: $_rds_reg, unknown: $_rds_unk."
+    __rec_domain_list_available "$_rds_avail"
     rec_ui_note "state: $_RD_STATE_FILE"
   fi
   [ -n "$_RD_OUT" ] && rec_ui_note "available list: $_RD_OUT"
 }
 
-# Single-line, single-write emission. Each scan_run reads xargs output
-# line-by-line in the main shell and prints AVAILABLE entries from there,
-# so there are no longer concurrent stdout writers; this helper just
-# centralises the color/glyph choice.
-__rec_domain_emit_available() {
-  if [ "${REC_UI_C1:-0}" = 1 ]; then
-    printf '\033[%sm%s\033[0m %s\n' "$REC_UI_S_GREEN" "$REC_UI_G_OK" "$1"
-  else
-    printf '%s %s\n' "$REC_UI_G_OK" "$1"
+# Print the available-name list that the scan no longer streams live: a green
+# count heading on stderr (TTY only — it's decoration, like the progress bar,
+# and the count is already in the summary line), then the bare names on stdout
+# (one per line, in the state file's recorded order) so the list stays pipe-
+# and copy-friendly. No names => nothing. Arg: the available count.
+__rec_domain_list_available() {
+  [ "${1:-0}" -gt 0 ] || return 0
+  if [ -t 2 ]; then
+    {
+      __rec_ui_emit 2 "$REC_UI_S_GREEN" "$REC_UI_G_OK"
+      printf ' available (%s):\n' "$1"
+    } >&2
   fi
+  awk -F'\t' -v tld=".$_RD_TLD" '$2 == "AVAILABLE" { print $1 tld }' \
+    "$_RD_STATE_FILE" 2>/dev/null
 }
 
 # --- single-domain classifier (used by `rec domain check`) ---------------

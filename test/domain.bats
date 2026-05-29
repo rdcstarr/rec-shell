@@ -282,7 +282,7 @@ cc"
   [[ "$output" == *"b	AVAILABLE	rdap"* ]]
 }
 
-@test "bash: scan streams AVAILABLE results to stdout" {
+@test "bash: scan lists AVAILABLE results on stdout at the end" {
   write_fake_curl_404
   domain_in bash linux '__rec_domain_dispatch scan ro --len 1 --alphabet ab --jobs 2'
   [ "$status" -eq 0 ]
