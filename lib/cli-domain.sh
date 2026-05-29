@@ -373,12 +373,12 @@ __rec_domain_scan() {
       return 1
     fi
     _RD_SKIP_RDAP=yes
-    rec_ui_warn ".$_RD_TLD has no RDAP server — using whois only (slower; the registry may rate-limit aggressively)."
+    rec_ui_warn ".$_RD_TLD has no RDAP server — whois only, slower & may rate-limit."
     # ccTLD whois servers (e.g. rotld) ban fast under load; keep
-    # concurrency gentle unless the user explicitly asked for more.
+    # concurrency gentle unless the user explicitly asked for more. The
+    # cap is surfaced in the scan header's "N jobs" field, so no note here.
     if [ "$_RD_JOBS_EXPLICIT" = no ] && [ "$_RD_JOBS" -gt 3 ]; then
       _RD_JOBS=3
-      rec_ui_note "limited to --jobs 3 for a whois-only TLD (override with --jobs N)"
     fi
   fi
 
@@ -444,13 +444,17 @@ __rec_domain_scan_run() {
   _rd_remaining=$((_RD_TOTAL - _rd_done_count))
   [ "$_rd_remaining" -lt 0 ] && _rd_remaining=0
 
-  rec_ui_heading "Scanning .$_RD_TLD (len $_RD_LEN, alphabet \"$_RD_ALPHABET_SPEC\") — $_RD_TOTAL candidates"
+  # Compact, single-line header. The method ("whois-only") and worker count
+  # ride along here instead of as separate notes, and the state-file path is
+  # left for the final summary — Ctrl+C resumability is taught by the resume
+  # hint printed on interrupt, so it needn't clutter the start.
+  _rd_method="$_RD_JOBS jobs"
+  [ "$_RD_SKIP_RDAP" = yes ] && _rd_method="whois-only · $_RD_JOBS jobs"
+  rec_ui_heading "Scanning .$_RD_TLD · len $_RD_LEN · $_RD_ALPHABET_SPEC · $_RD_TOTAL names · $_rd_method"
   if [ "$_rd_done_count" -gt 0 ]; then
     rec_ui_info "resuming from state: $_rd_done_count done, $_rd_remaining to go"
   fi
-  rec_ui_note "state: $_RD_STATE_FILE"
-  [ -n "$_RD_OUT" ] && rec_ui_note "also appending AVAILABLE names to: $_RD_OUT"
-  rec_ui_note "Ctrl+C stops the scan; rerun the same command to resume."
+  [ -n "$_RD_OUT" ] && rec_ui_note "appending available names to $_RD_OUT"
 
   # Build the list of remaining candidates. BEGIN-getline avoids the
   # NR==FNR idiom, which silently passes nothing through when the done
@@ -538,7 +542,7 @@ __rec_domain_scan_run() {
   _rd_processed=0
   _rd_found=0
   RD_TLD="$_RD_TLD" RD_RDAP_ONLY="$_RD_RDAP_ONLY" RD_SKIP_RDAP="${_RD_SKIP_RDAP:-no}" RD_TIMEOUT="$_RD_HTTP_TIMEOUT" \
-    xargs -P "$_RD_JOBS" -n 1 -I {} \
+    xargs -P "$_RD_JOBS" -I {} \
       sh -c "$_rd_worker_script" rec-domain-worker {} <"$_rd_cands" \
     | while IFS="$(printf '\t')" read -r _rd_c _rd_st _rd_src; do
         [ -z "$_rd_c" ] && continue
@@ -632,8 +636,8 @@ __rec_domain_summary() {
     rec_ui_step "resume: rec domain scan $_RD_TLD --len $_RD_LEN --alphabet \"$_RD_ALPHABET_SPEC\""
   else
     rec_ui_ok "Done. $_rds_done/$_RD_TOTAL processed — available: $_rds_avail, registered: $_rds_reg, unknown: $_rds_unk."
+    rec_ui_note "state: $_RD_STATE_FILE"
   fi
-  rec_ui_note "state: $_RD_STATE_FILE"
   [ -n "$_RD_OUT" ] && rec_ui_note "available list: $_RD_OUT"
 }
 
