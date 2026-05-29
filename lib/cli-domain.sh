@@ -113,11 +113,19 @@ __rec_domain_check() {
     && command -v __rec_ui_spin_frame >/dev/null 2>&1 \
     && __rec_ui_interactive; then
     _rdc_tmp="$(mktemp 2>/dev/null || mktemp -t rec-domain-check.XXXXXX)"
-    # Capture both streams: the verdict uses rec_ui_err/warn (stderr) for
-    # the colored status line, and we want all of it buffered so it prints
-    # cleanly after the spinner is erased.
-    { __rec_domain_check_render "$_rdc_domain" >"$_rdc_tmp" 2>&1; } &
+    # Interactive bash/zsh have monitor mode (job control) on by default,
+    # which would bracket our spinner with "[N] pid" (job start) and
+    # "[N] + done …" (job end) lines. Suppress the end line by turning
+    # monitor mode off, and the start line by redirecting the backgrounding
+    # group's stderr — the same technique rec_ui_spin uses. Restore the
+    # user's monitor setting afterward. The verdict is captured to a temp
+    # file (both streams: the colored status line uses rec_ui_err/warn on
+    # stderr) and printed once, after the spinner is erased.
+    case "$-" in *m*) _rdc_mon=1 ;; *) _rdc_mon=0 ;; esac
+    set +m
+    { __rec_domain_check_render "$_rdc_domain" >"$_rdc_tmp" 2>&1 & } 2>/dev/null
     _rdc_pid=$!
+    trap '__rec_domain_check_spin_cleanup "$_rdc_pid" "$_rdc_mon" "$_rdc_tmp"' INT TERM
     {
       printf '\033[?25l'
       _rdc_i=0
@@ -132,12 +140,26 @@ __rec_domain_check() {
     } >&2
     wait "$_rdc_pid"
     _rdc_rc=$?
+    trap - INT TERM
+    [ "$_rdc_mon" = 1 ] && set -m
     cat "$_rdc_tmp"
     rm -f "$_rdc_tmp"
     return "$_rdc_rc"
   fi
 
   __rec_domain_check_render "$_rdc_domain"
+}
+
+# Spinner interrupt handler: kill the in-flight lookup, restore the cursor
+# and the user's monitor-mode setting, drop the temp file, then re-raise
+# SIGINT so the shell sees a clean Ctrl+C.
+__rec_domain_check_spin_cleanup() {
+  kill "$1" 2>/dev/null
+  printf '\r\033[2K\033[?25h' >&2
+  [ "$2" = 1 ] && set -m
+  rm -f "$3" 2>/dev/null
+  trap - INT TERM
+  kill -INT $$ 2>/dev/null
 }
 
 # Render the verdict for one domain. Returns 0 when the status was
