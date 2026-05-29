@@ -28,32 +28,53 @@ domain_in() {
 
 # --- shared stubs ---------------------------------------------------------
 
-# Routes the RDAP URL to a canned HTTP status. Looks at args for the URL.
+# RDAP stub. The real classifier requests `%{http_code} %{num_redirects}`
+# (and the TLD probe requests `%{num_redirects}` alone), so the stub keys off
+# the requested -w format and emits the matching fields. A genuine "free"
+# answer needs a redirect (came from a real registry RDAP); a 0-redirect 404
+# means the TLD has no RDAP. Domains under *.nordap.test simulate that.
 write_fake_curl_router() {
   cat >"$T/bin/curl" <<'EOF'
 #!/bin/sh
-url=""
+url=""; fmt=""; prev=""
 for a in "$@"; do
+  case "$prev" in -w) fmt="$a" ;; esac
   case "$a" in https://*) url="$a" ;; esac
+  prev="$a"
 done
 d="${url##*/domain/}"
 case "$d" in
-  *.available.test) code=404 ;;
-  *.taken.test|example.com|google.com) code=200 ;;
-  *.error.test) code=500 ;;
-  *) code=404 ;;
+  *.available.test) code=404; redir=1 ;;          # genuinely free (RDAP TLD)
+  *.taken.test|example.com|google.com) code=200; redir=1 ;;
+  *.nordap.test) code=404; redir=0 ;;             # TLD has no RDAP server
+  *.error.test) code=500; redir=1 ;;
+  *) code=404; redir=1 ;;
 esac
-printf '%s' "$code"
+case "$fmt" in
+  *http_code*) printf '%s %s' "$code" "$redir" ;;
+  *num_redirects*) printf '%s' "$redir" ;;        # TLD probe
+  *) printf '%s' "$code" ;;
+esac
 EOF
   chmod +x "$T/bin/curl"
 }
 
-# Always-404 curl — used for scan tests where we want every candidate to be
-# classified AVAILABLE.
+# Always-free curl — every name returns 404 from a real RDAP server (1
+# redirect), so the classifier reports AVAILABLE. The TLD probe sees a
+# redirect too, so the TLD counts as RDAP-supported.
 write_fake_curl_404() {
   cat >"$T/bin/curl" <<'EOF'
 #!/bin/sh
-printf '%s' '404'
+fmt=""; prev=""
+for a in "$@"; do
+  case "$prev" in -w) fmt="$a" ;; esac
+  prev="$a"
+done
+case "$fmt" in
+  *http_code*) printf '404 1' ;;
+  *num_redirects*) printf '1' ;;
+  *) printf '404' ;;
+esac
 EOF
   chmod +x "$T/bin/curl"
 }
@@ -93,10 +114,11 @@ EOF
   [[ "$output" == *"rdap"* ]]
 }
 
-@test "bash: check returns 1 REGISTERED on RDAP 200" {
+@test "bash: check returns 0 REGISTERED on RDAP 200 (taken is a success)" {
   write_fake_curl_router
+  write_fake_whois_router
   domain_in bash linux '__rec_domain_check example.com'
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 0 ]
   [[ "$output" == *"REGISTERED"* ]]
   [[ "$output" == *"example.com"* ]]
 }
@@ -110,12 +132,34 @@ EOF
   [[ "$output" == *"AVAILABLE"* ]]
 }
 
-@test "bash: check returns 2 UNKNOWN when RDAP errors and no whois" {
+# Regression: a TLD with no RDAP server (e.g. .ro) makes rdap.org return a
+# bare 404 with ZERO redirects for EVERY name. That must NOT be reported as
+# available — the lookup must fall through to whois, which here says the
+# domain is registered.
+@test "bash: check does not trust a 0-redirect RDAP 404 (no-RDAP TLD)" {
+  write_fake_curl_router
+  cat >"$T/bin/whois" <<'EOF'
+#!/bin/sh
+[ "$1" = "--" ] && shift
+cat <<ROWS
+  Domain Name: $1
+  Registrar: Some ccTLD Registrar
+  Registered On: 2010-01-01
+ROWS
+EOF
+  chmod +x "$T/bin/whois"
+  domain_in bash linux '__rec_domain_check google.nordap.test'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"REGISTERED"* ]]
+  [[ "$output" != *"AVAILABLE"* ]]
+}
+
+@test "bash: check reports UNKNOWN (exit 1) when RDAP has no answer and no whois" {
   write_fake_curl_router
   domain_in bash linux '
     rec_have() { case "$1" in whois) return 1 ;; *) command -v "$1" >/dev/null 2>&1 ;; esac; }
-    __rec_domain_check foo.error.test'
-  [ "$status" -eq 2 ]
+    __rec_domain_check google.nordap.test'
+  [ "$status" -eq 1 ]
   [[ "$output" == *"UNKNOWN"* ]]
 }
 
@@ -132,8 +176,9 @@ EOF
 
 @test "bash: check lowercases input" {
   write_fake_curl_router
+  write_fake_whois_router
   domain_in bash linux '__rec_domain_check EXAMPLE.COM'
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 0 ]
   [[ "$output" == *"example.com"* ]]
 }
 
@@ -334,6 +379,47 @@ EOF
   domain_in bash linux '__rec_domain_dispatch scan ro --len 1 --alphabet ab --jobs 2 --rdap 2>&1'
   [ "$status" -eq 0 ]
   [[ "$output" != *"WHOIS-WAS-CALLED"* ]]
+}
+
+# A TLD with no RDAP server (probe returns 0 redirects) must scan via whois.
+@test "bash: scan on a no-RDAP TLD uses whois only" {
+  cat >"$T/bin/curl" <<'EOF'
+#!/bin/sh
+fmt=""; prev=""
+for a in "$@"; do case "$prev" in -w) fmt="$a" ;; esac; prev="$a"; done
+case "$fmt" in
+  *http_code*) printf '404 0' ;;
+  *num_redirects*) printf '0' ;;
+  *) printf '404' ;;
+esac
+EOF
+  chmod +x "$T/bin/curl"
+  cat >"$T/bin/whois" <<'EOF'
+#!/bin/sh
+[ "$1" = "--" ] && shift
+printf '%% No entries found for the selected source(s).\n'
+EOF
+  chmod +x "$T/bin/whois"
+  domain_in bash linux '__rec_domain_dispatch scan ro --len 1 --alphabet ab --jobs 2 2>&1'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no RDAP server"* ]]
+  state="$T/.cache/rec-shell/domain/scans/ro-1-ab.state"
+  grep -q '^a	AVAILABLE	whois' "$state"
+  grep -q '^b	AVAILABLE	whois' "$state"
+}
+
+# --rdap forced on a no-RDAP TLD is a hard error (would be all UNKNOWN).
+@test "bash: scan --rdap on a no-RDAP TLD errors out" {
+  cat >"$T/bin/curl" <<'EOF'
+#!/bin/sh
+fmt=""; prev=""
+for a in "$@"; do case "$prev" in -w) fmt="$a" ;; esac; prev="$a"; done
+case "$fmt" in *num_redirects*) printf '0' ;; *) printf '404' ;; esac
+EOF
+  chmod +x "$T/bin/curl"
+  domain_in bash linux '__rec_domain_dispatch scan ro --len 1 --alphabet ab --rdap 2>&1'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"no RDAP server"* ]]
 }
 
 # --- misc -----------------------------------------------------------------

@@ -100,28 +100,117 @@ __rec_domain_check() {
     return 2
   fi
 
-  # Run the classifier without throttle (single shot).
   unset _RD_DELAY_FILE
   _RD_RDAP_ONLY=no
   _RD_HTTP_TIMEOUT=10
   _RD_WHOIS_TIMEOUT=10
-  __rec_domain_check_one "$_rdc_domain"
 
+  # Interactive + TTY: animate a spinner while the lookup runs in the
+  # background, then print the rendered verdict once. Non-interactive
+  # (pipes, scripts, tests): render synchronously, no animation.
+  rec_ui_interactive_load 2>/dev/null
+  if command -v __rec_ui_interactive >/dev/null 2>&1 \
+    && command -v __rec_ui_spin_frame >/dev/null 2>&1 \
+    && __rec_ui_interactive; then
+    _rdc_tmp="$(mktemp 2>/dev/null || mktemp -t rec-domain-check.XXXXXX)"
+    # Capture both streams: the verdict uses rec_ui_err/warn (stderr) for
+    # the colored status line, and we want all of it buffered so it prints
+    # cleanly after the spinner is erased.
+    { __rec_domain_check_render "$_rdc_domain" >"$_rdc_tmp" 2>&1; } &
+    _rdc_pid=$!
+    {
+      printf '\033[?25l'
+      _rdc_i=0
+      while kill -0 "$_rdc_pid" 2>/dev/null; do
+        printf '\r'
+        __rec_ui_emit 1 "$REC_UI_S_CYAN" "$(__rec_ui_spin_frame "$_rdc_i")"
+        printf ' checking %s…' "$_rdc_domain"
+        _rdc_i=$(((_rdc_i + 1) % 10))
+        __rec_ui_sleep_frame
+      done
+      printf '\r\033[2K\033[?25h'
+    } >&2
+    wait "$_rdc_pid"
+    _rdc_rc=$?
+    cat "$_rdc_tmp"
+    rm -f "$_rdc_tmp"
+    return "$_rdc_rc"
+  fi
+
+  __rec_domain_check_render "$_rdc_domain"
+}
+
+# Render the verdict for one domain. Returns 0 when the status was
+# determined (AVAILABLE or REGISTERED), 1 only when UNKNOWN/error — so an
+# interactive prompt (e.g. ble.sh's "[ble: exit N]") flags a non-zero exit
+# only on a genuine "couldn't tell", never on a normal "it's taken".
+__rec_domain_check_render() {
+  _rdcr_d="$1"
+  _RD_WHOIS_OUT=""
+  __rec_domain_check_one "$_rdcr_d"
   case "$_RD_STATUS" in
     AVAILABLE)
-      rec_ui_ok "AVAILABLE  $_rdc_domain"
-      [ -n "$_RD_SOURCE" ] && rec_ui_note "source: $_RD_SOURCE"
+      rec_ui_ok "AVAILABLE   $_rdcr_d"
+      rec_ui_note "looks unregistered (via $_RD_SOURCE) — you can register it"
       return 0
       ;;
     REGISTERED)
-      rec_ui_err "REGISTERED $_rdc_domain"
-      [ -n "$_RD_SOURCE" ] && rec_ui_note "source: $_RD_SOURCE"
-      return 1
+      rec_ui_err "REGISTERED  $_rdcr_d"
+      __rec_domain_check_details "$_rdcr_d"
+      rec_ui_note "source: $_RD_SOURCE"
+      return 0
       ;;
     *)
-      rec_ui_warn "UNKNOWN    $_rdc_domain"
-      [ -n "$_RD_SOURCE" ] && rec_ui_note "source: $_RD_SOURCE"
-      return 2
+      rec_ui_warn "UNKNOWN     $_rdcr_d"
+      __rec_domain_check_unknown_hint "$_rdcr_d"
+      return 1
+      ;;
+  esac
+}
+
+# Best-effort registrar + expiry for a REGISTERED domain. Reuses the whois
+# text already fetched by check_one when it took the whois path; otherwise
+# (RDAP said 200, no whois yet) runs a single whois for the detail lines.
+# Parsing reuses the field helpers from cli-whois.sh.
+__rec_domain_check_details() {
+  command -v __rec_whois_field >/dev/null 2>&1 || return 0
+  _rdcd_out="${_RD_WHOIS_OUT:-}"
+  if [ -z "$_rdcd_out" ] && rec_have whois; then
+    _rdcd_out="$(whois -- "$1" 2>/dev/null)" || _rdcd_out=""
+  fi
+  [ -z "$_rdcd_out" ] && return 0
+  _rdcd_reg="$(__rec_whois_field "$_rdcd_out" 'Registrar')"
+  [ -z "$_rdcd_reg" ] && _rdcd_reg="$(__rec_whois_field "$_rdcd_out" 'Sponsoring Registrar')"
+  _rdcd_exp="$(__rec_whois_field "$_rdcd_out" 'Registry Expiry Date')"
+  [ -z "$_rdcd_exp" ] && _rdcd_exp="$(__rec_whois_field "$_rdcd_out" 'Expiry Date')"
+  [ -z "$_rdcd_exp" ] && _rdcd_exp="$(__rec_whois_field "$_rdcd_out" 'Expiration Date')"
+  [ -z "$_rdcd_exp" ] && _rdcd_exp="$(__rec_whois_field "$_rdcd_out" 'Expires On')"
+  [ -z "$_rdcd_exp" ] && _rdcd_exp="$(__rec_whois_field "$_rdcd_out" 'paid-till')"
+  [ -n "$_rdcd_reg" ] && rec_ui_kv registrar "$_rdcd_reg"
+  if [ -n "$_rdcd_exp" ] && command -v __rec_whois_kv_date >/dev/null 2>&1; then
+    __rec_whois_kv_date expires "$_rdcd_exp" expires
+  elif [ -n "$_rdcd_exp" ]; then
+    rec_ui_kv expires "$_rdcd_exp"
+  fi
+}
+
+# A short, human note explaining an UNKNOWN verdict.
+__rec_domain_check_unknown_hint() {
+  case "$_RD_SOURCE" in
+    rdap-none)
+      rec_ui_note "this TLD has no RDAP server and whois was unavailable/inconclusive"
+      ;;
+    whois-ratelimit)
+      rec_ui_note "the registry rate-limited the whois query — try again shortly"
+      ;;
+    whois-empty)
+      rec_ui_note "whois returned nothing — the registry may be unreachable"
+      ;;
+    whois-unclear)
+      rec_ui_note "couldn't parse a clear answer — try: rec whois $1"
+      ;;
+    *)
+      rec_ui_note "source: $_RD_SOURCE — try: rec whois $1"
       ;;
   esac
 }
@@ -148,7 +237,9 @@ __rec_domain_scan() {
   _RD_LEN=""
   _RD_ALPHABET_SPEC="a-z"
   _RD_JOBS=8
+  _RD_JOBS_EXPLICIT=no
   _RD_RDAP_ONLY=no
+  _RD_SKIP_RDAP=no
   _RD_RESUME=auto
   _RD_RESET=no
   _RD_OUT=""
@@ -169,6 +260,7 @@ __rec_domain_scan() {
       --jobs | -j)
         shift
         _RD_JOBS="$1"
+        _RD_JOBS_EXPLICIT=yes
         ;;
       --resume) _RD_RESUME=yes ;;
       --reset) _RD_RESET=yes ;;
@@ -241,7 +333,49 @@ __rec_domain_scan() {
     return 0
   fi
 
+  # Decide RDAP vs whois for this TLD before doing any work. rdap.org
+  # returns a bare 404 (zero redirects) for TLDs with no RDAP server —
+  # ccTLDs like .ro. Treating that as "available" reports every name as
+  # free (the false-positive bug). One probe up front lets us route the
+  # whole scan correctly instead of paying a useless RDAP round-trip per
+  # candidate.
+  _RD_SKIP_RDAP=no
+  if ! __rec_domain_tld_has_rdap "$_RD_TLD"; then
+    if [ "$_RD_RDAP_ONLY" = yes ]; then
+      rec_ui_err "rec domain scan: .$_RD_TLD has no RDAP server — --rdap would report every name as UNKNOWN."
+      rec_ui_step "drop --rdap to use whois (slower; the registry may rate-limit)"
+      return 2
+    fi
+    if ! rec_have whois; then
+      rec_ui_err "rec domain scan: .$_RD_TLD has no RDAP server and whois is not installed."
+      return 1
+    fi
+    _RD_SKIP_RDAP=yes
+    rec_ui_warn ".$_RD_TLD has no RDAP server — using whois only (slower; the registry may rate-limit aggressively)."
+    # ccTLD whois servers (e.g. rotld) ban fast under load; keep
+    # concurrency gentle unless the user explicitly asked for more.
+    if [ "$_RD_JOBS_EXPLICIT" = no ] && [ "$_RD_JOBS" -gt 3 ]; then
+      _RD_JOBS=3
+      rec_ui_note "limited to --jobs 3 for a whois-only TLD (override with --jobs N)"
+    fi
+  fi
+
   __rec_domain_scan_run
+}
+
+# __rec_domain_tld_has_rdap TLD -> 0 if rdap.org can route this TLD to a
+# real RDAP server. A supported TLD yields a redirect (≥1) to the registry
+# RDAP endpoint even for a non-existent name; an unsupported TLD returns a
+# bare 404 from rdap.org itself with zero redirects. On any network/curl
+# failure we answer "no" so the caller falls back to whois.
+__rec_domain_tld_has_rdap() {
+  rec_have curl || return 1
+  _rdth_r="$(curl -sSL -o /dev/null -w '%{num_redirects}' --max-time 10 \
+    "https://rdap.org/domain/rec-shell-rdap-probe.$1" 2>/dev/null)"
+  case "$_rdth_r" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$_rdth_r" -ge 1 ]
 }
 
 # --- scan: main run -------------------------------------------------------
@@ -317,25 +451,30 @@ __rec_domain_scan_run() {
   # which is the sole writer to the state file and to stdout. Small
   # writes from each worker are atomic on a pipe (≤ PIPE_BUF), so even
   # without locking nothing tears.
+  # Mirrors __rec_domain_check_one, but as a standalone POSIX-sh snippet so
+  # it can run under `xargs -P` without the surrounding shell context. A 404
+  # from rdap.org only means "available" when it came from a real registry
+  # RDAP server (≥1 redirect); a 0-redirect 404 means the TLD has no RDAP,
+  # so we fall through to whois (and RD_SKIP_RDAP short-circuits straight to
+  # whois for TLDs we already know lack RDAP).
   _rd_worker_script='
     d="$1"
     full="$d.$RD_TLD"
-    code="$(curl -sSL -o /dev/null -w "%{http_code}" --max-time "$RD_TIMEOUT" "https://rdap.org/domain/$full" 2>/dev/null)"
-    case "$code" in
-      404) printf "%s\tAVAILABLE\trdap\n" "$d"; exit 0 ;;
-      200) printf "%s\tREGISTERED\trdap\n" "$d"; exit 0 ;;
-    esac
-    if [ "$RD_RDAP_ONLY" = yes ] || ! command -v whois >/dev/null 2>&1; then
-      printf "%s\tUNKNOWN\trdap-%s\n" "$d" "${code:-error}"
-      exit 0
+    if [ "$RD_SKIP_RDAP" != yes ]; then
+      resp="$(curl -sSL -o /dev/null -w "%{http_code} %{num_redirects}" --max-time "$RD_TIMEOUT" "https://rdap.org/domain/$full" 2>/dev/null)"
+      code="${resp%% *}"; redir="${resp##* }"
+      case "$redir" in ""|*[!0-9]*) redir=0 ;; esac
+      if [ "$code" = 200 ]; then printf "%s\tREGISTERED\trdap\n" "$d"; exit 0; fi
+      if [ "$code" = 404 ] && [ "$redir" -ge 1 ]; then printf "%s\tAVAILABLE\trdap\n" "$d"; exit 0; fi
+      if [ "$RD_RDAP_ONLY" = yes ]; then printf "%s\tUNKNOWN\trdap-%s\n" "$d" "${code:-error}"; exit 0; fi
     fi
+    if ! command -v whois >/dev/null 2>&1; then printf "%s\tUNKNOWN\trdap-none\n" "$d"; exit 0; fi
     out="$(whois -- "$full" 2>/dev/null)" || out=""
-    if [ -z "$out" ]; then
-      printf "%s\tUNKNOWN\twhois-empty\n" "$d"
-      exit 0
-    fi
+    if [ -z "$out" ]; then printf "%s\tUNKNOWN\twhois-empty\n" "$d"; exit 0; fi
     if printf "%s\n" "$out" | grep -i -E -q "No match for|NOT FOUND|No Data Found|Domain not found|is free|No entries found|Status: *AVAILABLE|Status: *free"; then
       printf "%s\tAVAILABLE\twhois\n" "$d"
+    elif printf "%s\n" "$out" | grep -i -E -q "rate.?limit|quota exceeded|try again later|exceeded the limit"; then
+      printf "%s\tUNKNOWN\twhois-ratelimit\n" "$d"
     elif printf "%s\n" "$out" | grep -i -E -q "^[[:space:]]*(Domain Name|Registrar|Creation Date|Created):"; then
       printf "%s\tREGISTERED\twhois\n" "$d"
     else
@@ -344,7 +483,7 @@ __rec_domain_scan_run() {
   '
 
   _rd_processed=0
-  RD_TLD="$_RD_TLD" RD_RDAP_ONLY="$_RD_RDAP_ONLY" RD_TIMEOUT="$_RD_HTTP_TIMEOUT" \
+  RD_TLD="$_RD_TLD" RD_RDAP_ONLY="$_RD_RDAP_ONLY" RD_SKIP_RDAP="${_RD_SKIP_RDAP:-no}" RD_TIMEOUT="$_RD_HTTP_TIMEOUT" \
     xargs -P "$_RD_JOBS" -n 1 -I {} \
       sh -c "$_rd_worker_script" rec-domain-worker {} <"$_rd_cands" \
     | while IFS="$(printf '\t')" read -r _rd_c _rd_st _rd_src; do
@@ -430,34 +569,51 @@ __rec_domain_check_one() {
   _RD_SOURCE=none
 
   _rdco_code=""
+  _rdco_redir=0
   if rec_have curl; then
     # -L: rdap.org is a bootstrap aggregator that 302-redirects to the
-    # actual RDAP server. Without -L we'd classify every response as
-    # `rdap-302` and never reach the real verdict.
-    _rdco_code="$(curl -sSL -o /dev/null -w '%{http_code}' \
+    # actual RDAP server. We capture BOTH the final HTTP code and the
+    # number of redirects, because a bare 404 from rdap.org itself
+    # (0 redirects) means "this TLD has no RDAP server at all" — NOT that
+    # the domain is free. ccTLDs like .ro have no RDAP, so every name
+    # returns 404/0-redirects; trusting that as AVAILABLE was a
+    # false-positive bug. Only a 404 that came FROM a real registry RDAP
+    # server (≥1 redirect) means genuinely unregistered.
+    _rdco_resp="$(curl -sSL -o /dev/null -w '%{http_code} %{num_redirects}' \
       --max-time "$_RD_HTTP_TIMEOUT" \
       "https://rdap.org/domain/$_rdco_d" 2>/dev/null)"
+    _rdco_code="${_rdco_resp%% *}"
+    _rdco_redir="${_rdco_resp##* }"
+    case "$_rdco_redir" in '' | *[!0-9]*) _rdco_redir=0 ;; esac
   fi
   case "$_rdco_code" in
-    404)
-      _RD_STATUS=AVAILABLE
-      _RD_SOURCE=rdap
-      return 0
-      ;;
     200)
       _RD_STATUS=REGISTERED
       _RD_SOURCE=rdap
       return 0
+      ;;
+    404)
+      if [ "$_rdco_redir" -ge 1 ]; then
+        _RD_STATUS=AVAILABLE
+        _RD_SOURCE=rdap
+        return 0
+      fi
+      # 404 with no redirect -> TLD has no RDAP; fall through to whois.
       ;;
     *) ;;
   esac
 
   if [ "$_RD_RDAP_ONLY" = yes ] || ! rec_have whois; then
     _RD_STATUS=UNKNOWN
-    _RD_SOURCE="rdap-${_rdco_code:-error}"
+    if [ "$_rdco_code" = 404 ] && [ "$_rdco_redir" -lt 1 ]; then
+      _RD_SOURCE="rdap-none"
+    else
+      _RD_SOURCE="rdap-${_rdco_code:-error}"
+    fi
     return 0
   fi
   _rdco_out="$(whois -- "$_rdco_d" 2>/dev/null)" || _rdco_out=""
+  _RD_WHOIS_OUT="$_rdco_out" # stashed so check_details can reuse it
   if [ -z "$_rdco_out" ]; then
     _RD_STATUS=UNKNOWN
     _RD_SOURCE=whois-empty

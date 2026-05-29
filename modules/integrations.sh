@@ -130,7 +130,22 @@ case "$REC_SHELL_NAME" in
     if [ -z "${BLE_VERSION:-}" ] && [ -r "$HOME/.local/share/blesh/ble.sh" ]; then
       . "$HOME/.local/share/blesh/ble.sh" --noattach
       if [ -n "${BLE_VERSION:-}" ]; then
-        PROMPT_COMMAND="ble-attach${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+        # Attach via a one-shot wrapper that turns monitor mode off for the
+        # duration. ble.sh backgrounds `command stty …` calls while attaching;
+        # under the interactive shell's default `set -m`, bash announces their
+        # completion as "[1] Done  command '/usr/bin/stty' …" on the next
+        # prompt. Suppressing monitor mode across the (idempotent, one-time)
+        # attach swallows that noise without affecting the user's own jobs.
+        __rec_ble_attach() {
+          [ -n "${_REC_BLE_ATTACHED:-}" ] && return 0
+          _REC_BLE_ATTACHED=1
+          local _rec_m=
+          case $- in *m*) _rec_m=1 ;; esac
+          set +m 2>/dev/null
+          ble-attach
+          [ -n "$_rec_m" ] && set -m 2>/dev/null
+        }
+        PROMPT_COMMAND="__rec_ble_attach${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
         # Permanently block oh-my-posh's transient-prompt → ble.sh
         # integration. oh-my-posh init.NNN.sh ends with:
         #   bleopt prompt_ps1_transient=always
