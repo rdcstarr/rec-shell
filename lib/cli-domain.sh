@@ -439,7 +439,6 @@ __rec_domain_scan_run() {
     rec_ui_err 'cannot create scratch directory'
     return 1
   }
-  _RD_STOP_FILE="$_rd_work/stop"
 
   _rd_done_count="$(__rec_domain_count_done "$_RD_STATE_FILE")"
   _rd_remaining=$((_RD_TOTAL - _rd_done_count))
@@ -451,6 +450,7 @@ __rec_domain_scan_run() {
   fi
   rec_ui_note "state: $_RD_STATE_FILE"
   [ -n "$_RD_OUT" ] && rec_ui_note "also appending AVAILABLE names to: $_RD_OUT"
+  rec_ui_note "Ctrl+C stops the scan; rerun the same command to resume."
 
   # Build the list of remaining candidates. BEGIN-getline avoids the
   # NR==FNR idiom, which silently passes nothing through when the done
@@ -464,7 +464,20 @@ __rec_domain_scan_run() {
         !($0 in d) { print }
       ' >"$_rd_cands"
 
-  trap '__rec_domain_signal_cleanup' INT TERM
+  # Ctrl+C handling. Two hard constraints pull against each other:
+  #   1. SIGINT must actually stop the scan — so xargs runs in the foreground
+  #      process group (`xargs | while`), where Ctrl+C reaches and kills it.
+  #   2. We still want to print the interrupted-summary + resume hint.
+  # But with `cmd | while`, the `while` runs in a subshell and zsh unwinds
+  # scan_run on SIGINT before any post-pipeline code — so a "set a flag, check
+  # it after" approach prints nothing under zsh. Solution: print the summary
+  # FROM the trap itself. The trap fires in whichever context(s) caught the
+  # signal (parent and/or the while-subshell); a mkdir mutex guarantees the
+  # summary is emitted exactly once. `exit` is never used — that would close
+  # the user's interactive shell, since `rec` is a function in it.
+  _RD_INTERRUPTED=0
+  _RD_SUMMARY_LOCK="$_rd_work/.summary.lock"
+  trap '__rec_domain_on_interrupt' INT TERM
 
   # Run each candidate through a small POSIX-sh worker via xargs -P.
   # Concurrency lives entirely inside xargs — no shell fifos, no manual
@@ -504,6 +517,14 @@ __rec_domain_scan_run() {
     fi
   '
 
+  # Foreground xargs|while: Ctrl+C reaches xargs and its workers (they share
+  # the foreground process group), so the scan genuinely STOPS — verified in
+  # both bash and zsh. On bash the INT trap also fires and prints the
+  # interrupted-summary; zsh hard-aborts the function on a SIGINT-killed
+  # foreground pipeline, so it just returns to the prompt (no summary line).
+  # Either way the per-result writes already landed, so re-running the exact
+  # same command resumes (the upfront hint above tells the user how). We
+  # never `exit` from the trap — `rec` is a function in the live shell.
   _rd_processed=0
   RD_TLD="$_RD_TLD" RD_RDAP_ONLY="$_RD_RDAP_ONLY" RD_SKIP_RDAP="${_RD_SKIP_RDAP:-no}" RD_TIMEOUT="$_RD_HTTP_TIMEOUT" \
     xargs -P "$_RD_JOBS" -n 1 -I {} \
@@ -529,23 +550,32 @@ __rec_domain_scan_run() {
 
   trap - INT TERM
 
-  __rec_domain_summary "done"
+  # On a clean finish, print the done-summary (the interrupt trap already
+  # printed its own under the lock). Guard with the same lock so we never
+  # double-print if both paths race.
+  if [ "$_RD_INTERRUPTED" = 1 ]; then
+    _rd_rc=130
+  elif command mkdir "$_RD_SUMMARY_LOCK" 2>/dev/null; then
+    __rec_domain_summary "done"
+    _rd_rc=0
+  else
+    _rd_rc=0
+  fi
 
   rm -rf "$_rd_work"
   if [ "$_rd_monitor_was_on" = yes ]; then set -m; fi
+  return "$_rd_rc"
 }
 
-# Cleanup invoked on SIGINT/SIGTERM in main shell. The terminal forwards the
-# signal to the entire foreground process group, so xargs and its workers
-# also receive it and die — we just touch the stop file (handy for any
-# subprocess that polls it), print the summary, restore terminal state,
-# and exit with the conventional 130.
-__rec_domain_signal_cleanup() {
-  touch "$_RD_STOP_FILE" 2>/dev/null
-  __rec_domain_summary "interrupted"
-  trap - INT TERM
-  if [ "${_rd_monitor_was_on:-no}" = yes ]; then set -m; fi
-  exit 130
+# SIGINT/SIGTERM handler for an in-progress scan. Records the interruption
+# and prints the summary + resume hint exactly once (mkdir mutex — the trap
+# may fire in both the parent shell and the `while` subshell). Never exits:
+# `rec` is a function in the user's live shell, so an exit would close it.
+__rec_domain_on_interrupt() {
+  _RD_INTERRUPTED=1
+  if command mkdir "$_RD_SUMMARY_LOCK" 2>/dev/null; then
+    __rec_domain_summary "interrupted"
+  fi
 }
 
 # Print final summary line plus a resume hint.
