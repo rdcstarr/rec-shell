@@ -464,6 +464,16 @@ __rec_domain_scan_run() {
         !($0 in d) { print }
       ' >"$_rd_cands"
 
+  # Progress-bar glyphs (Unicode blocks, ASCII fallback) and the available
+  # count carried over from a resumed run, so the bar's "found" total is
+  # cumulative rather than just this session.
+  if [ "${REC_UI_UTF:-no}" = yes ]; then
+    _RD_BAR_FULL='█'; _RD_BAR_EMPTY='░'; _RD_BAR_L='▕'; _RD_BAR_R='▏'
+  else
+    _RD_BAR_FULL='#'; _RD_BAR_EMPTY='-'; _RD_BAR_L='['; _RD_BAR_R=']'
+  fi
+  _rd_avail_base="$(__rec_domain_count_status "$_RD_STATE_FILE" AVAILABLE)"
+
   # Ctrl+C handling. Two hard constraints pull against each other:
   #   1. SIGINT must actually stop the scan — so xargs runs in the foreground
   #      process group (`xargs | while`), where Ctrl+C reaches and kills it.
@@ -526,6 +536,7 @@ __rec_domain_scan_run() {
   # same command resumes (the upfront hint above tells the user how). We
   # never `exit` from the trap — `rec` is a function in the live shell.
   _rd_processed=0
+  _rd_found=0
   RD_TLD="$_RD_TLD" RD_RDAP_ONLY="$_RD_RDAP_ONLY" RD_SKIP_RDAP="${_RD_SKIP_RDAP:-no}" RD_TIMEOUT="$_RD_HTTP_TIMEOUT" \
     xargs -P "$_RD_JOBS" -n 1 -I {} \
       sh -c "$_rd_worker_script" rec-domain-worker {} <"$_rd_cands" \
@@ -533,19 +544,17 @@ __rec_domain_scan_run() {
         [ -z "$_rd_c" ] && continue
         printf '%s\t%s\t%s\n' "$_rd_c" "$_rd_st" "$_rd_src" >>"$_RD_STATE_FILE"
         if [ "$_rd_st" = AVAILABLE ]; then
+          # Wipe the bottom progress bar so the result prints on a clean
+          # line, then let the next bar redraw float below it (scrolling-log
+          # over a pinned bar). Only when both streams are the same TTY.
+          if [ -t 1 ] && [ -t 2 ]; then printf '\r\033[2K' >&2; fi
           __rec_domain_emit_available "$_rd_c.$_RD_TLD"
           [ -n "$_RD_OUT" ] && printf '%s\n' "$_rd_c.$_RD_TLD" >>"$_RD_OUT"
+          _rd_found=$((_rd_found + 1))
         fi
         _rd_processed=$((_rd_processed + 1))
-        # Periodic progress every 50 candidates, on stderr so it doesn't
-        # interleave with the AVAILABLE stream on stdout.
-        if [ $((_rd_processed % 50)) -eq 0 ]; then
-          _rd_total_done=$((_rd_done_count + _rd_processed))
-          _rd_pct=0
-          [ "$_RD_TOTAL" -gt 0 ] && _rd_pct=$((_rd_total_done * 100 / _RD_TOTAL))
-          printf '  [progress: %d/%d (%d%%)]\n' \
-            "$_rd_total_done" "$_RD_TOTAL" "$_rd_pct" >&2
-        fi
+        __rec_domain_bar "$((_rd_done_count + _rd_processed))" "$_RD_TOTAL" \
+          "$((_rd_avail_base + _rd_found))"
       done
 
   trap - INT TERM
@@ -578,6 +587,36 @@ __rec_domain_on_interrupt() {
   fi
 }
 
+# Render the in-place progress bar to stderr (TTY only): a pinned bottom
+# line like "▕████░░░░░░▏ 42%  19629/46656  ✓312". Carriage-return overwrites
+# the line each call; AVAILABLE results scroll above it (they wipe the line
+# first). No-op when stderr isn't a terminal, so pipes/tests stay clean.
+# Args: processed total found.
+__rec_domain_bar() {
+  [ -t 2 ] || return 0
+  _rdb_p="$1"; _rdb_t="$2"; _rdb_f="$3"
+  _rdb_pct=0
+  [ "$_rdb_t" -gt 0 ] && _rdb_pct=$((_rdb_p * 100 / _rdb_t))
+  [ "$_rdb_pct" -gt 100 ] && _rdb_pct=100
+  _rdb_w=24
+  _rdb_fill=$((_rdb_pct * _rdb_w / 100))
+  _rdb_full=""; _rdb_empty=""; _rdb_i=0
+  while [ "$_rdb_i" -lt "$_rdb_fill" ]; do _rdb_full="$_rdb_full$_RD_BAR_FULL"; _rdb_i=$((_rdb_i + 1)); done
+  while [ "$_rdb_i" -lt "$_rdb_w" ]; do _rdb_empty="$_rdb_empty$_RD_BAR_EMPTY"; _rdb_i=$((_rdb_i + 1)); done
+  {
+    printf '\r\033[2K%s' "$_RD_BAR_L"
+    __rec_ui_emit 2 "$REC_UI_S_CYAN" "$_rdb_full"
+    __rec_ui_emit 2 "$REC_UI_S_DIM" "$_rdb_empty"
+    printf '%s ' "$_RD_BAR_R"
+    __rec_ui_emit 2 "$REC_UI_S_BOLD" "$(printf '%3d%%' "$_rdb_pct")"
+    printf '  %d/%d' "$_rdb_p" "$_rdb_t"
+    if [ "$_rdb_f" -gt 0 ]; then
+      printf '  '
+      __rec_ui_emit 2 "$REC_UI_S_GREEN" "$REC_UI_G_OK$_rdb_f"
+    fi
+  } >&2
+}
+
 # Print final summary line plus a resume hint.
 __rec_domain_summary() {
   _rds_kind="$1"
@@ -585,6 +624,8 @@ __rec_domain_summary() {
   _rds_avail="$(__rec_domain_count_status "$_RD_STATE_FILE" AVAILABLE)"
   _rds_reg="$(__rec_domain_count_status "$_RD_STATE_FILE" REGISTERED)"
   _rds_unk="$(__rec_domain_count_status "$_RD_STATE_FILE" UNKNOWN)"
+  # Wipe any leftover progress bar before the summary.
+  [ -t 2 ] && printf '\r\033[2K' >&2
   printf '\n'
   if [ "$_rds_kind" = "interrupted" ]; then
     rec_ui_warn "Interrupted. $_rds_done/$_RD_TOTAL processed, $_rds_avail available so far."
