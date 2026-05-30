@@ -388,16 +388,34 @@ __rec_domain_scan() {
 # __rec_domain_tld_has_rdap TLD -> 0 if rdap.org can route this TLD to a
 # real RDAP server. A supported TLD yields a redirect (≥1) to the registry
 # RDAP endpoint even for a non-existent name; an unsupported TLD returns a
-# bare 404 from rdap.org itself with zero redirects. On any network/curl
-# failure we answer "no" so the caller falls back to whois.
+# bare 404 from rdap.org ITSELF with zero redirects.
+#
+# Robustness: this is a single probe whose verdict routes (or, under --rdap,
+# can abort) the whole scan, so it must not be fooled by a transient hiccup.
+# When we hammer rdap.org it starts dropping connections mid-transfer (curl
+# exit 56, "unexpected eof") — but the redirect is usually already recorded,
+# so a redirect count ≥1 is conclusive "has RDAP" even when curl then errors.
+# We only conclude "no RDAP" on a CLEAN 404 with zero redirects (curl exit 0),
+# the genuine ccTLD signature (.ro et al). Anything else is inconclusive
+# (timeout / reset / rate-limit), so we retry; after a few inconclusive tries
+# we assume the TLD HAS RDAP rather than wrongly declaring it RDAP-less — the
+# per-name worker already handles transient RDAP errors (and a misrouted
+# no-RDAP TLD still can't yield a false AVAILABLE: that needs redirects ≥1).
 __rec_domain_tld_has_rdap() {
   rec_have curl || return 1
-  _rdth_r="$(curl -sSL -o /dev/null -w '%{num_redirects}' --max-time 10 \
-    "https://rdap.org/domain/rec-shell-rdap-probe.$1" 2>/dev/null)"
-  case "$_rdth_r" in
-    '' | *[!0-9]*) return 1 ;;
-  esac
-  [ "$_rdth_r" -ge 1 ]
+  _rdth_i=0
+  while [ "$_rdth_i" -lt 3 ]; do
+    _rdth_out="$(curl -sSL -o /dev/null -w '%{http_code} %{num_redirects}' \
+      --max-time 10 "https://rdap.org/domain/rec-shell-rdap-probe.$1" 2>/dev/null)"
+    _rdth_rc=$?
+    _rdth_code="${_rdth_out%% *}"
+    _rdth_redir="${_rdth_out##* }"
+    case "$_rdth_redir" in '' | *[!0-9]*) _rdth_redir=0 ;; esac
+    if [ "$_rdth_redir" -ge 1 ]; then return 0; fi
+    if [ "$_rdth_rc" -eq 0 ] && [ "$_rdth_code" = 404 ]; then return 1; fi
+    _rdth_i=$((_rdth_i + 1))
+  done
+  return 0
 }
 
 # --- scan: main run -------------------------------------------------------

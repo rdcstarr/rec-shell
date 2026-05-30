@@ -471,16 +471,49 @@ EOF
 
 # --rdap forced on a no-RDAP TLD is a hard error (would be all UNKNOWN).
 @test "bash: scan --rdap on a no-RDAP TLD errors out" {
+  # Clean no-RDAP signature: rdap.org answers 404 with ZERO redirects and curl
+  # exits 0. The TLD probe requests "%{http_code} %{num_redirects}", so emit
+  # both fields (http_code branch first — that format also contains the
+  # num_redirects token).
   cat >"$T/bin/curl" <<'EOF'
 #!/bin/sh
 fmt=""; prev=""
 for a in "$@"; do case "$prev" in -w) fmt="$a" ;; esac; prev="$a"; done
-case "$fmt" in *num_redirects*) printf '0' ;; *) printf '404' ;; esac
+case "$fmt" in
+  *http_code*) printf '404 0' ;;
+  *num_redirects*) printf '0' ;;
+  *) printf '404' ;;
+esac
 EOF
   chmod +x "$T/bin/curl"
   domain_in bash linux '__rec_domain_dispatch scan ro --len 1 --alphabet ab --rdap 2>&1'
   [ "$status" -eq 2 ]
   [[ "$output" == *"no RDAP server"* ]]
+}
+
+# Regression: rdap.org rate-limits a hammering scan by dropping the connection
+# mid-transfer (curl exit 56, "unexpected eof"), but the redirect to the real
+# registry RDAP server is already recorded. The TLD probe must read
+# redirects >= 1 as "has RDAP" and NOT abort a --rdap scan with a bogus
+# ".com has no RDAP server". A clean 404/0-redirect would still mean no RDAP.
+@test "bash: scan --rdap survives a rate-limited TLD probe (curl errors after redirect)" {
+  cat >"$T/bin/curl" <<'EOF'
+#!/bin/sh
+fmt=""; prev=""
+for a in "$@"; do case "$prev" in -w) fmt="$a" ;; esac; prev="$a"; done
+case "$fmt" in
+  *http_code*) printf '404 1' ;;
+  *num_redirects*) printf '1' ;;
+  *) printf '404' ;;
+esac
+exit 56
+EOF
+  chmod +x "$T/bin/curl"
+  domain_in bash linux '__rec_domain_dispatch scan com --len 1 --alphabet ab --rdap 2>&1'
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no RDAP server"* ]]
+  state="$T/.cache/rec-shell/domain/scans/com-1-ab.state"
+  grep -q '^a	AVAILABLE	rdap' "$state"
 }
 
 # --- misc -----------------------------------------------------------------
