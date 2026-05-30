@@ -520,12 +520,18 @@ __rec_domain_scan_run() {
     if ! command -v whois >/dev/null 2>&1; then printf "%s\tUNKNOWN\trdap-none\n" "$d"; exit 0; fi
     out="$(whois -- "$full" 2>/dev/null)" || out=""
     if [ -z "$out" ]; then printf "%s\tUNKNOWN\twhois-empty\n" "$d"; exit 0; fi
-    if printf "%s\n" "$out" | grep -i -E -q "No match for|NOT FOUND|No Data Found|Domain not found|is free|No entries found|Status: *AVAILABLE|Status: *free"; then
+    # Check REGISTERED before AVAILABLE. Thin registries (.com/.net) answer
+    # from the registry AND follow the registrar referral; that registrar
+    # server can append a trailing "not found" which matches the AVAILABLE
+    # set (NOT FOUND) and would mask the authoritative "Domain Name:" /
+    # "Creation Date:" lines — reporting a taken name as free. The registry
+    # section is the truth, so a definitive registered marker wins first.
+    if printf "%s\n" "$out" | grep -i -E -q "^[[:space:]]*(Domain Name|Registrar|Creation Date|Created):"; then
+      printf "%s\tREGISTERED\twhois\n" "$d"
+    elif printf "%s\n" "$out" | grep -i -E -q "No match for|NOT FOUND|No Data Found|Domain not found|is free|No entries found|Status: *AVAILABLE|Status: *free"; then
       printf "%s\tAVAILABLE\twhois\n" "$d"
     elif printf "%s\n" "$out" | grep -i -E -q "rate.?limit|quota exceeded|try again later|exceeded the limit"; then
       printf "%s\tUNKNOWN\twhois-ratelimit\n" "$d"
-    elif printf "%s\n" "$out" | grep -i -E -q "^[[:space:]]*(Domain Name|Registrar|Creation Date|Created):"; then
-      printf "%s\tREGISTERED\twhois\n" "$d"
     else
       printf "%s\tUNKNOWN\twhois-unclear\n" "$d"
     fi
@@ -722,6 +728,16 @@ __rec_domain_check_one() {
     _RD_SOURCE=whois-empty
     return 0
   fi
+  # Registered wins before available: a thin-registry (.com/.net) whois
+  # follows the registrar referral, which can append a trailing "not found"
+  # that matches the available phrasings and would mask the authoritative
+  # "Domain Name:" / "Creation Date:" — i.e. report a taken name as free.
+  if printf '%s\n' "$_rdco_out" \
+    | grep -i -E -q '^[[:space:]]*(Domain Name|Registrar|Creation Date|Created):'; then
+    _RD_STATUS=REGISTERED
+    _RD_SOURCE=whois
+    return 0
+  fi
   if printf '%s\n' "$_rdco_out" | __rec_whois_text_says_available; then
     _RD_STATUS=AVAILABLE
     _RD_SOURCE=whois
@@ -731,12 +747,6 @@ __rec_domain_check_one() {
     | grep -i -E -q 'rate.?limit|quota exceeded|try again later|exceeded the limit'; then
     _RD_STATUS=UNKNOWN
     _RD_SOURCE=whois-ratelimit
-    return 0
-  fi
-  if printf '%s\n' "$_rdco_out" \
-    | grep -i -E -q '^[[:space:]]*(Domain Name|Registrar|Creation Date|Created):'; then
-    _RD_STATUS=REGISTERED
-    _RD_SOURCE=whois
     return 0
   fi
   _RD_STATUS=UNKNOWN

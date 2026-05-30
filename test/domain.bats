@@ -154,6 +154,32 @@ EOF
   [[ "$output" != *"AVAILABLE"* ]]
 }
 
+# Regression: a thin registry (.com/.net) answers from the registry AND the
+# whois client follows the registrar referral, whose server can append a
+# trailing "not found". That phrase matches the AVAILABLE set (NOT FOUND) and
+# used to mask the authoritative "Domain Name:" / "Creation Date:" lines,
+# reporting a clearly-taken name as free. Registered must win.
+@test "bash: check treats a registry record + trailing referral 'not found' as REGISTERED" {
+  write_fake_curl_router
+  cat >"$T/bin/whois" <<'EOF'
+#!/bin/sh
+[ "$1" = "--" ] && shift
+cat <<ROWS
+   Domain Name: ${1}
+   Registrar WHOIS Server: whois.domainregistry.com
+   Creation Date: 1999-01-24T05:00:00Z
+   Registrar: DomainRegistry.com LLC
+not found
+ROWS
+EOF
+  chmod +x "$T/bin/whois"
+  # *.error.test -> RDAP 500 -> falls through to whois.
+  domain_in bash linux '__rec_domain_check ahx.error.test'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"REGISTERED"* ]]
+  [[ "$output" != *"AVAILABLE"* ]]
+}
+
 @test "bash: check reports UNKNOWN (exit 1) when RDAP has no answer and no whois" {
   write_fake_curl_router
   domain_in bash linux '
@@ -406,6 +432,41 @@ EOF
   state="$T/.cache/rec-shell/domain/scans/ro-1-ab.state"
   grep -q '^a	AVAILABLE	whois' "$state"
   grep -q '^b	AVAILABLE	whois' "$state"
+}
+
+# Regression (scan worker): the same thin-registry referral trap as the check
+# test above, but exercised through the inlined xargs worker. A registry
+# record followed by a trailing "not found" must record REGISTERED, never a
+# false AVAILABLE.
+@test "bash: scan worker treats registry record + trailing 'not found' as REGISTERED" {
+  cat >"$T/bin/curl" <<'EOF'
+#!/bin/sh
+fmt=""; prev=""
+for a in "$@"; do case "$prev" in -w) fmt="$a" ;; esac; prev="$a"; done
+case "$fmt" in
+  *http_code*) printf '503 0' ;;
+  *num_redirects*) printf '1' ;;
+  *) printf '503' ;;
+esac
+EOF
+  chmod +x "$T/bin/curl"
+  cat >"$T/bin/whois" <<'EOF'
+#!/bin/sh
+[ "$1" = "--" ] && shift
+cat <<ROWS
+   Domain Name: ${1}
+   Registrar WHOIS Server: whois.domainregistry.com
+   Creation Date: 1999-01-24T05:00:00Z
+not found
+ROWS
+EOF
+  chmod +x "$T/bin/whois"
+  domain_in bash linux '__rec_domain_dispatch scan com --len 1 --alphabet ab --jobs 2 2>&1'
+  [ "$status" -eq 0 ]
+  state="$T/.cache/rec-shell/domain/scans/com-1-ab.state"
+  grep -q '^a	REGISTERED	whois' "$state"
+  grep -q '^b	REGISTERED	whois' "$state"
+  ! grep -q 'AVAILABLE' "$state"
 }
 
 # --rdap forced on a no-RDAP TLD is a hard error (would be all UNKNOWN).
